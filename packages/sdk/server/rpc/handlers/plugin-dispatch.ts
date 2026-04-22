@@ -57,7 +57,7 @@ function resolvePluginHandler<TRequest, TResponse>(
   const handlerDef = resolvePluginHandlerDef(modelId, handlerName);
 
   return {
-    result: handlerDef.handler(request as never) as
+    result: handlerDef.handler(request) as
       | Promise<TResponse>
       | AsyncGenerator<TResponse>,
     streaming: handlerDef.streaming,
@@ -106,7 +106,7 @@ export async function* dispatchPluginStream<TRequest, TResponse>(
         );
       }
       yield* handlerDef.handler(
-        request as never,
+        request,
         inputStream,
       ) as AsyncGenerator<TResponse>;
     } else {
@@ -124,7 +124,7 @@ export async function* dispatchPluginStream<TRequest, TResponse>(
           "reply",
         );
       }
-      yield* handlerDef.handler(request as never) as AsyncGenerator<TResponse>;
+      yield* handlerDef.handler(request) as AsyncGenerator<TResponse>;
     }
   });
 }

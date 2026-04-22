@@ -126,7 +126,7 @@ export async function downloadSingleFileFromRegistry(
     timeout: REGISTRY_STREAM_TIMEOUT_MS,
     outputFile: modelPath,
     ...(onProgress && { onProgress }),
-    ...(signal && { signal: signal as unknown as globalThis.AbortSignal }),
+    ...(signal && { signal: signal }),
   };
 
   if (blobBinding) {
