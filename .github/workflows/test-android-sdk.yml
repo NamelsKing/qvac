@@ -210,21 +210,13 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
 
-      - name: Build and inject local @qvac/cli
+      - name: Build local @qvac/cli from branch
         run: |
           cd packages/cli
-          npm install --ignore-scripts 2>/dev/null || true
+          npm install --ignore-scripts
           npx tsc
-          CLI_TARGETS=(
-            "${{ inputs.project-directory }}/node_modules/@qvac/cli/dist"
-            "${{ inputs.working-directory }}/node_modules/@qvac/cli/dist"
-          )
-          for target in "${CLI_TARGETS[@]}"; do
-            if [ -d "$target" ]; then
-              cp -r dist/* "$target/"
-              echo "✅ Injected local CLI into $target"
-            fi
-          done
+          echo "QVAC_CLI_PATH=${{ github.workspace }}/packages/cli/dist/index.js" >> $GITHUB_ENV
+          echo "✅ Built local CLI, QVAC_CLI_PATH set"
 
       - name: Build mobile consumer APK
         working-directory: ${{ inputs.working-directory }}
