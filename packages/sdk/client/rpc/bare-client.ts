@@ -26,6 +26,7 @@ import {
   initializeWorkerCore,
   shutdownBareDirectWorker,
 } from "@/server/worker-core";
+import { assertLifecycleAllowed } from "@/server/bare/runtime-lifecycle";
 
 const logger = getClientLogger();
 
@@ -143,6 +144,8 @@ async function* streamWithProgress(
 }
 
 export async function send<T extends Request>(request: T): Promise<Response> {
+  assertLifecycleAllowed(request);
+
   const handler = getHandler(request.type);
   if (!handler) throw new RPCNoHandlerError(request.type);
 
@@ -151,6 +154,8 @@ export async function send<T extends Request>(request: T): Promise<Response> {
 }
 
 async function* stream<T extends Request>(request: T) {
+  assertLifecycleAllowed(request);
+
   const handler = getHandler(request.type);
   if (!handler) throw new RPCNoHandlerError(request.type);
 
@@ -275,6 +280,8 @@ export async function createDuplexSession(payload: string, _commandId: number) {
 
   const { PassThrough } = await import("bare-stream");
   const request = JSON.parse(payload) as Request;
+
+  assertLifecycleAllowed(request);
 
   const entry = registry[request.type];
   if (!entry || entry.type !== "duplex") {
