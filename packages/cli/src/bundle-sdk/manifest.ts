@@ -148,32 +148,46 @@ export async function generateAddonsManifest (options: GenerateAddonsManifestOpt
   const resolutions = header.resolutions ?? {}
 
   const packageNames = new Set<string>()
-  const nodeModulesRegex = /\/node_modules\/(@[^/]+\/[^/]+|[^/]+)\//
+  // Use global flag to capture nested node_modules segments, e.g.
+  //   /node_modules/@qvac/sdk/node_modules/bare-abort/binding.js
+  // must yield both "@qvac/sdk" AND "bare-abort". Without /g, match()
+  // returns only the first capture, missing nested native addons.
+  const nodeModulesRegex = /\/node_modules\/(@[^/]+\/[^/]+|[^/]+)(?=\/)/g
 
   for (const key of Object.keys(resolutions)) {
-    const match = key.match(nodeModulesRegex)
-    if (match?.[1]) {
-      packageNames.add(match[1])
+    for (const match of key.matchAll(nodeModulesRegex)) {
+      if (match[1]) packageNames.add(match[1])
     }
   }
 
   const addons: string[] = []
   for (const pkgName of packageNames) {
-    const pkgJsonPath = path.join(
-      projectRoot,
-      'node_modules',
-      pkgName,
-      'package.json'
-    )
-    try {
-      if (fs.existsSync(pkgJsonPath)) {
-        const pkgJson = JSON.parse(await fsp.readFile(pkgJsonPath, 'utf8')) as { addon?: boolean }
-        if (pkgJson.addon === true) {
-          addons.push(pkgName)
+    // Addons may live hoisted at the root node_modules or nested under a
+    // parent package (e.g. @qvac/sdk/node_modules/bare-abort). Try both.
+    const candidatePkgJsonPaths = [
+      path.join(projectRoot, 'node_modules', pkgName, 'package.json')
+    ]
+    for (const key of Object.keys(resolutions)) {
+      const marker = `/node_modules/${pkgName}/`
+      const idx = key.indexOf(marker)
+      if (idx === -1) continue
+      const rel = key.slice(1, idx + marker.length) + 'package.json'
+      candidatePkgJsonPaths.push(path.join(projectRoot, rel))
+    }
+
+    let pkgJson: { addon?: boolean } | null = null
+    for (const candidate of candidatePkgJsonPaths) {
+      try {
+        if (fs.existsSync(candidate)) {
+          pkgJson = JSON.parse(await fsp.readFile(candidate, 'utf8')) as { addon?: boolean }
+          break
         }
+      } catch (err) {
+        logger.warn(`   Could not read ${candidate}: ${(err as Error).message}`)
       }
-    } catch (err) {
-      logger.warn(`   Could not read ${pkgName}/package.json: ${(err as Error).message}`)
+    }
+    if (pkgJson?.addon === true) {
+      addons.push(pkgName)
     }
   }
 

@@ -94,7 +94,9 @@ jobs:
         with:
           ref: ${{ inputs.test-version || github.event.pull_request.head.sha || github.sha }}
           token: ${{ secrets.PAT_TOKEN }}
-          sparse-checkout: ${{ inputs.project-directory }}
+          sparse-checkout: |
+            ${{ inputs.project-directory }}
+            packages/cli
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
         with:
@@ -207,6 +209,22 @@ jobs:
         if: inputs.working-directory != inputs.project-directory
         working-directory: ${{ inputs.working-directory }}
         run: bun run build
+
+      - name: Build and inject local @qvac/cli
+        run: |
+          cd packages/cli
+          npm install --ignore-scripts 2>/dev/null || true
+          npx tsc
+          CLI_TARGETS=(
+            "${{ inputs.project-directory }}/node_modules/@qvac/cli/dist"
+            "${{ inputs.working-directory }}/node_modules/@qvac/cli/dist"
+          )
+          for target in "${CLI_TARGETS[@]}"; do
+            if [ -d "$target" ]; then
+              cp -r dist/* "$target/"
+              echo "✅ Injected local CLI into $target"
+            fi
+          done
 
       - name: Build mobile consumer APK
         working-directory: ${{ inputs.working-directory }}

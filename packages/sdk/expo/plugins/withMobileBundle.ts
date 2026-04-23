@@ -98,12 +98,16 @@ function findConfigFile(projectRoot: string): string | null {
  * falls back to npx for convenience when CLI is not installed.
  */
 function resolveCliCommand(projectRoot: string): string {
+  // Prefer the built entry (dist/index.js) — this is what the published
+  // package and local file: installs both expose via pkg.bin. The previous
+  // check for src/index.js never matched either case and always fell back
+  // to npx, which pulls the registry version and bypasses local fixes.
   const cliPath = path.join(
     projectRoot,
     "node_modules",
     "@qvac",
     "cli",
-    "src",
+    "dist",
     "index.js",
   );
 
