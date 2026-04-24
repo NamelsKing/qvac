@@ -13,15 +13,10 @@
   "dependencies": {
     "@qvac/sdk": "file:..",
     "@tetherto/qvac-test-suite": "^0.5.1",
-    "bare-fs": "4.5.1",
-    "bare-link": "3.2.1",
-    "bare-os": "3.6.2",
     "mqtt": "^5.14.1",
     "react-native-bare-kit": "0.12.3"
   },
   "devDependencies": {
-    "aedes": "^0.51.3",
-    "typescript": "^5.9.3",
-    "websocket-stream": "^5.5.2"
+    "typescript": "^5.9.3"
   }
 }
