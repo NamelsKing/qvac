@@ -109,12 +109,6 @@ jobs:
       - name: Setup Bare tooling
         uses: tetherto/qvac/.github/actions/setup-bare-tooling@0bbdca93da303a0b1634ba14a89cec085621078d
 
-      - if: ${{ matrix.platform == 'win32' }}
-        name: Setup Python on self-hosted Windows runner
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Setup Apple Clang
         uses: tetherto/qvac/.github/actions/setup-apple-clang@1d9b2165867d03c6edd675e402ee101a5d48a6d8
 

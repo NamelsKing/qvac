@@ -402,8 +402,9 @@ async function downloadFile (url, destPath) {
  * Model files can be staged in two ways:
  *   1. Download from HuggingFace (slow on first run; cached afterwards).
  *      QVAC_TEST_GGUF_BASE_URL overrides the base URL.
- *   2. Copy from a local qvac-parakeet.cpp checkout via QVAC_TEST_GGUF_DIR.
- *      Useful in dev so the suite doesn't re-download a 700 MB file.
+ *   2. Reuse a `./models/` directory produced by `npm run setup-models`
+ *      via QVAC_TEST_GGUF_DIR (or QVAC_TEST_GGUF_<TYPE>) so the suite
+ *      doesn't re-download or re-convert a 700 MB file each run.
  *
  * @param {string} [modelPath] - Optional override for the GGUF path
  * @returns {Promise<string>} Path to the .gguf file
@@ -583,10 +584,12 @@ async function runTranscription (params, expectation = {}) {
 }
 
 // GGUF model staging. Each entry is a single self-contained
-// `.gguf` file produced by `scripts/convert-nemo-to-gguf.py`. The
+// `.gguf` file produced by `scripts/convert-nemo-to-gguf.py` (run
+// via `npm run setup-models`, which writes to `./models/`). The
 // integration suite either downloads it from a HuggingFace mirror or
-// copies it from a local qvac-parakeet.cpp `models/` directory pointed
-// at by the `QVAC_TEST_GGUF_DIR` env var.
+// copies it from any pre-staged directory pointed at by the
+// `QVAC_TEST_GGUF_DIR` env var (typically the package's own
+// `./models/`).
 //
 // Quantisation: we default to q8_0 (1.9x smaller than f16, no
 // user-facing transcript regressions on shipping fixtures). Tests can
@@ -622,12 +625,14 @@ const MODEL_CONFIGS = {
  *
  * Resolution order:
  *   1. `QVAC_TEST_GGUF_<TYPE>` env var (e.g. QVAC_TEST_GGUF_TDT)
- *   2. `QVAC_TEST_GGUF_DIR/<file>` -- copy from a local qvac-parakeet.cpp
- *      models/ directory if present.
+ *   2. `QVAC_TEST_GGUF_DIR/<file>` -- copy from any pre-staged
+ *      `models/` directory if present (typically the package's own
+ *      `./models/` produced by `npm run setup-models`).
  *   3. Existing cache in the test models dir.
  *   4. (TODO) Download from HuggingFace -- not yet wired since GGUFs
- *      aren't published there; users currently stage them by setting
- *      QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models.
+ *      aren't published there; users currently stage them by running
+ *      `npm run setup-models` (which writes to ./models/) or by
+ *      pointing `QVAC_TEST_GGUF_DIR` at an existing GGUF directory.
  *
  * @param {string} modelType - 'tdt', 'ctc', 'eou', or 'sortformer'
  * @param {string} [override] - explicit GGUF path to use
@@ -669,8 +674,9 @@ async function ensureGgufForType (modelType, override = null) {
     return cachePath
   }
 
-  console.log(`  ${modelType.toUpperCase()} GGUF not available. Set ` +
-              `${envKey} or QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models ` +
+  console.log(`  ${modelType.toUpperCase()} GGUF not available. Run ` +
+              '`npm run setup-models` or set ' +
+              `${envKey} / QVAC_TEST_GGUF_DIR to a directory of GGUFs ` +
               'to enable this test.')
   return null
 }
@@ -694,9 +700,10 @@ async function ensureModelForType (modelType) {
 async function loadGgufOrSkip (t, modelType = 'tdt') {
   const ggufPath = await ensureGgufForType(modelType)
   if (!ggufPath || !fs.existsSync(ggufPath)) {
-    t.pass(`No ${modelType.toUpperCase()} GGUF available; ` +
-           'set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models or ' +
-           `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf`)
+    t.pass(`No ${modelType.toUpperCase()} GGUF available; run ` +
+           '`npm run setup-models` (or set ' +
+           `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf, ` +
+           'or QVAC_TEST_GGUF_DIR=/path/to/models)')
     return null
   }
   return ggufPath

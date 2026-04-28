@@ -63,7 +63,13 @@ if [[ -z "$PYTHON_BIN" ]]; then
   fi
 fi
 if [[ -z "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="python3"
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  else
+    PYTHON_BIN="python3"
+  fi
 fi
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ ! -x "$PYTHON_BIN" ]]; then
