@@ -26,10 +26,6 @@ async function runCorruptedModelTest (options = {}) { // eslint-disable-line no-
   return runIntegrationModule('../integration/corrupted-model.test.js', options)
 }
 
-async function runIndividualFilePathsTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/individual-file-paths.test.js', options)
-}
-
 async function runLiveStreamSimulationTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/live-stream-simulation.test.js', options)
 }
@@ -40,12 +36,4 @@ async function runModelFileValidationTest (options = {}) { // eslint-disable-lin
 
 async function runMultipleTranscriptionsTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/multiple-transcriptions.test.js', options)
-}
-
-async function runNamedPathsAllModelsTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/named-paths-all-models.test.js', options)
-}
-
-async function runNamedPathsReloadTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/named-paths-reload.test.js', options)
 }

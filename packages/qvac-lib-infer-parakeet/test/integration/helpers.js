@@ -649,12 +649,20 @@ async function ensureGgufForType (modelType, override = null) {
     return process.env[envKey]
   }
 
-  const { modelsDir } = getTestPaths()
+  const { modelsDir, samplesDir } = getTestPaths()
   const cachePath = path.join(modelsDir, cfg.file)
 
   if (fs.existsSync(cachePath) &&
       fs.statSync(cachePath).size >= (cfg.minSize || 0)) {
     return cachePath
+  }
+
+  if (isMobile && samplesDir) {
+    const bundledPath = path.join(samplesDir, cfg.file)
+    if (fs.existsSync(bundledPath) &&
+        fs.statSync(bundledPath).size >= (cfg.minSize || 0)) {
+      return bundledPath
+    }
   }
 
   const externalDir = process.env && process.env.QVAC_TEST_GGUF_DIR
