@@ -64,7 +64,7 @@
     "stt",
     "asr",
     "nvidia",
-    "onnx",
+    "ggml",
     "transcription",
     "bare"
   ],

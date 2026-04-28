@@ -1,8 +1,3 @@
-// Pure-ggml backend (qvac_parakeet::Engine, sourced from
-// qvac-parakeet.cpp via the parakeet-cpp vcpkg port) replacing the
-// legacy onnxruntime sessions. See ParakeetModel.hpp for the design
-// rationale; this file just implements the thin wrapper.
-
 #include "ParakeetModel.hpp"
 
 #include <algorithm>
@@ -58,7 +53,7 @@ int64_t measureMs(Fn&& fn) {
 // ─────────────────────────────────────────────────────────────────────────
 //  ggml -> qvac-logging bridge
 // ─────────────────────────────────────────────────────────────────────────
-// ggml's metal / vulkan / cuda backends log via fprintf-to-stderr by
+// ggml's metal / vulkan / opencl backends log via fprintf-to-stderr by
 // default, which bypasses the binding's QLOG() pipe and bleeds into
 // example output (`ggml_metal_library_compile_pipeline: ...` lines on
 // every kernel JIT). We install a process-wide ggml log callback that
@@ -147,7 +142,7 @@ ParakeetModel::~ParakeetModel() {
 
 void ParakeetModel::initializeBackend() {
   // Backend init for ggml is handled inside Engine's constructor (which
-  // picks Metal / Vulkan / CUDA / CPU based on which ggml backends are
+  // picks Metal / Vulkan / OpenCL / CPU based on which ggml backends are
   // compiled in). All we need to do here is route ggml's own log lines
   // through the binding's QLOG() pipe so they obey --native-logs (or
   // stay silent by default) instead of bleeding to stderr.

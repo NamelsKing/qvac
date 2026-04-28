@@ -12,12 +12,6 @@ const {
   isMobile
 } = require('./helpers.js')
 
-// The GGUF backend ships a single self-contained `.gguf`
-// per model. The legacy onnx version of this test created multiple
-// corrupted .onnx files; we now create a single corrupted .gguf and
-// expect the binding to surface a load-time error to JS via the same
-// Error-event channel.
-
 function makeTempDir (label) {
   const root = isMobile
     ? path.join(global.testDir || os.tmpdir(), '.parakeet-test-' + label)

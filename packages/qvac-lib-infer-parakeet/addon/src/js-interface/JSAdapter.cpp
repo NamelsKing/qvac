@@ -22,12 +22,6 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
     config.modelPath = pathOpt.value().as<std::string>(env);
   }
 
-  // modelType is intentionally not read from JS: ParakeetModel::load()
-  // overrides cfg_.modelType from `engine_->model_type()` after the
-  // GGUF is loaded, so any JS hint would be ignored anyway. The
-  // ParakeetConfig default (TDT) is fine as a placeholder until that
-  // override fires.
-
   auto threadsOpt = jsObject.getOptionalProperty<js::Number>(env, "maxThreads");
   if (threadsOpt.has_value()) {
     config.maxThreads = threadsOpt.value().as<int32_t>(env);

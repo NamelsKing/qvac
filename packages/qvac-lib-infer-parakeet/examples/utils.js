@@ -19,7 +19,7 @@ const JOB_TRACKER_GRACE_MS = 5000
 
 /**
  * Install a JS-side sink for native log messages. Filters at
- * WARNING+ so ggml's metal/cuda/vulkan kernel-JIT INFO lines stay
+ * WARNING+ so ggml's metal/opencl/vulkan kernel-JIT INFO lines stay
  * silent. Edit NATIVE_MIN_PRIORITY at the top of this file to see
  * INFO / DEBUG.
  *

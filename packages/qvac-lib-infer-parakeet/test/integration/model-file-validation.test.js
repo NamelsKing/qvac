@@ -10,12 +10,6 @@ const {
   isMobile
 } = require('./helpers.js')
 
-// The GGUF backend takes a single `.gguf` per checkpoint via
-// `files.model`, and the model type is auto-detected from the GGUF
-// metadata. These tests cover the validation behaviour that's still
-// meaningful: empty files map, non-existent path, and an actual
-// GGUF on disk being accepted.
-
 test('Should accept empty files map without throwing', { timeout: 60000 }, async (t) => {
   if (isMobile) { t.pass('Skipped on mobile'); return }
   TranscriptionParakeet.prototype.validateModelFiles?.restore?.()

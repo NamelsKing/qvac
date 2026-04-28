@@ -17,7 +17,7 @@ export type ModelType = 'tdt' | 'ctc' | 'eou' | 'sortformer';
 export interface ParakeetConfig {
   /** Maximum CPU threads for inference (0 lets the engine pick) */
   maxThreads?: number;
-  /** Enable the linked ggml GPU backend (Metal / Vulkan / CUDA) */
+  /** Enable the linked ggml GPU backend (Metal / Vulkan / OpenCL) */
   useGPU?: boolean;
   /** Audio sample rate in Hz (default: 16000; engine assumes 16 kHz) */
   sampleRate?: number;

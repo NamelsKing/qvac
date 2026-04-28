@@ -21,7 +21,7 @@ runtime, single self-contained `.gguf` per model.
   - **EOU** (real-time streaming; emits `<EOU>` end-of-utterance token)
   - **Sortformer** (4-speaker diarization)
 - **GPU acceleration via ggml backends** (Metal on macOS/iOS, Vulkan on
-  Linux/Windows/Android, CUDA opt-in). The `parakeet-cpp` port handles
+  Linux/Windows/Android, OpenCL opt-in). The `parakeet-cpp` port handles
   backend selection at install time; runtime falls back to CPU if the
   selected backend doesn't initialise.
 - **Quantised by default** -- recommended GGUFs ship at q8_0 (~1.9× smaller
@@ -234,10 +234,7 @@ Useful as a pre-step for non-WAV inputs.
 ## JavaScript API
 
 The high-level wrapper lives in `parakeet.js`; the addon binding
-itself is in `binding.js`. Both expose the same shape they did
-under the legacy onnxruntime backend, so existing consumers don't
-need code changes -- just a model-path swap (`.gguf` instead of an
-ONNX directory).
+itself is in `binding.js`.
 
 ### Quick wiring
 
@@ -354,7 +351,7 @@ qvac-lib-infer-parakeet/
 | Windows  | x64          | Tier 1      | Vulkan (default) |
 
 GPU backends are selected at port-install time via the
-`parakeet-cpp[metal|vulkan|cuda|opencl]` features. The `parakeet-cpp`
+`parakeet-cpp[metal|vulkan|opencl]` features. The `parakeet-cpp`
 port bundles ggml at upstream `58c38058` so the binding is ABI-isolated
 from sibling speech-stack ports (`whisper-cpp`, `chatterbox-cpp`,
 `stable-diffusion-cpp`) that use the chatterbox-patched `ggml` overlay.

@@ -7,15 +7,11 @@
 namespace qvac_lib_infer_parakeet {
 
 struct ParakeetConfig {
-  // Path to a single `.gguf` produced by qvac-parakeet.cpp's
-  // converter. Either this or a streamed setWeightsForFile() byte
-  // sequence must be present at load() time.
   std::string modelPath;
 
   // ModelType is auto-detected by ParakeetModel::load() from the
   // engine's `parakeet.model.type` GGUF metadata; the default below
-  // is just a placeholder until that override fires. Callers no
-  // longer need to set this.
+  // is just a placeholder until that override fires.
   ModelType modelType = ModelType::TDT;
 
   int  maxThreads        = 4;
@@ -35,10 +31,7 @@ struct ParakeetConfig {
   //   - Sortformer speaker IDs stay stable from chunk to chunk.
   //   - EOU `<EOU>` boundaries surface as segment markers (and StreamEvents).
   //   - Optional energy-VAD events fire for CTC/TDT.
-  // Off by default for back-compat with the offline `transcribe_samples` /
-  // `diarize_samples` path. File-based one-shot transcription (one wav ->
-  // one transcript) keeps the offline path; live-mic / push-style consumers
-  // should opt in.
+  // Off by default for batch-style transcription.
   bool streaming             = false;
   int  streamingChunkMs      = 2000;
   int  streamingHistoryMs    = 30000;   // Sortformer rolling window only
