@@ -1,12 +1,16 @@
 'use strict'
 
 /**
- * Accuracy and Multi-Language Tests
+ * Accuracy and multi-language tests.
  *
- * Tests transcription accuracy using Word Error Rate (WER).
- * Note: NVIDIA Parakeet models are primarily trained on English,
- * so non-English tests verify the model handles other languages
- * gracefully (may not produce accurate transcriptions).
+ * The English test gates on Word Error Rate (WER). The non-English
+ * tests verify that whichever Parakeet GGUF is staged produces
+ * non-empty multi-segment output for Spanish / French / Croatian
+ * audio -- TDT v3 (the default) handles ~25 languages natively, so
+ * we expect real transcripts; CTC GGUFs are English-only and would
+ * produce gibberish-but-non-empty output, which still satisfies the
+ * smoke-level assertions here. Tightening these to per-language WER
+ * once we have reference transcripts is a separate task.
  */
 
 const test = require('brittle')
@@ -182,9 +186,12 @@ async function runLanguageTest (t, langConfig, loggerBinding, stagedGguf) {
         segmentCount: transcriptions.length
       }
     } else {
-      // For non-English, just verify we got some output
+      // No reference transcript supplied for this language; verify
+      // the engine produced non-empty output. Useful as a smoke test
+      // for multilingual GGUFs (TDT v3) and as a "doesn't crash"
+      // check for English-only GGUFs (CTC).
       const hasOutput = fullText.length > 0
-      console.log('\n⚠️ No WER validation - Parakeet is English-only')
+      console.log(`\nℹ️ No reference transcript for ${langConfig.name}; checking output non-emptiness`)
       console.log(`   Output received: ${hasOutput ? 'Yes' : 'No'}`)
       console.log(`   Text length: ${fullText.length} characters`)
 
@@ -251,7 +258,6 @@ test('Transcription test - Spanish (non-primary language)', { timeout: 300000 },
 
   console.log('\n' + '='.repeat(60))
   console.log('SPANISH TRANSCRIPTION TEST')
-  console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
   const stagedGguf = await loadGgufOrSkip(t)
@@ -265,10 +271,12 @@ test('Transcription test - Spanish (non-primary language)', { timeout: 300000 },
     } else if (result.error) {
       t.fail(`Spanish test failed: ${result.error}`)
     } else {
-      // For non-English, verify no crash and non-empty transcription payload.
+      // No reference transcript yet, so we only assert non-empty
+      // multi-segment output. TDT v3 should produce real Spanish
+      // text here; CTC GGUFs would produce gibberish-but-non-empty.
       t.ok(result.segmentCount > 0, `Should produce at least one segment for Spanish audio (got ${result.segmentCount})`)
       t.ok(result.actualText.length > 0, `Should produce non-empty text for Spanish audio (got ${result.actualText.length} chars)`)
-      console.log('\n✅ Spanish audio handled gracefully')
+      console.log('\n✅ Spanish audio produced output')
     }
   } finally {
     // Logger is released once at the end of the summary test.
@@ -283,7 +291,6 @@ test('Transcription test - French (non-primary language)', { timeout: 300000 }, 
 
   console.log('\n' + '='.repeat(60))
   console.log('FRENCH TRANSCRIPTION TEST')
-  console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
   const stagedGguf = await loadGgufOrSkip(t)
@@ -299,7 +306,7 @@ test('Transcription test - French (non-primary language)', { timeout: 300000 }, 
     } else {
       t.ok(result.segmentCount > 0, `Should produce at least one segment for French audio (got ${result.segmentCount})`)
       t.ok(result.actualText.length > 0, `Should produce non-empty text for French audio (got ${result.actualText.length} chars)`)
-      console.log('\n✅ French audio handled gracefully')
+      console.log('\n✅ French audio produced output')
     }
   } finally {
     // Logger is released once at the end of the summary test.
@@ -314,7 +321,6 @@ test('Transcription test - Croatian (non-primary language)', { timeout: 300000 }
 
   console.log('\n' + '='.repeat(60))
   console.log('CROATIAN TRANSCRIPTION TEST')
-  console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
   const stagedGguf = await loadGgufOrSkip(t)
@@ -330,7 +336,7 @@ test('Transcription test - Croatian (non-primary language)', { timeout: 300000 }
     } else {
       t.ok(result.segmentCount > 0, `Should produce at least one segment for Croatian audio (got ${result.segmentCount})`)
       t.ok(result.actualText.length > 0, `Should produce non-empty text for Croatian audio (got ${result.actualText.length} chars)`)
-      console.log('\n✅ Croatian audio handled gracefully')
+      console.log('\n✅ Croatian audio produced output')
     }
   } finally {
     // Logger is released once at the end of the summary test.
