@@ -18,11 +18,20 @@
 #                    and relies on the converter to pre-decode the
 #                    pieces array.
 #
-# Unpinned because this is a developer-time conversion tool, not a
-# runtime dep of the addon. Pin here if a specific upstream release
-# breaks the converter and we need to lock it.
+# Mostly unpinned because this is a developer-time conversion tool,
+# not a runtime dep of the addon. Pin here if a specific upstream
+# release breaks the converter and we need to lock it.
+#
+# Exception: on darwin-x64 (Intel Macs) the latest available torch
+# wheel is torch==2.2.2 -- PyTorch stopped shipping macOS x86_64
+# wheels after 2.2.x. That wheel is built against the NumPy 1.x C
+# ABI and crashes at `import torch` when paired with NumPy 2.x
+# ("Failed to initialize NumPy: _ARRAY_API not found" -> "Numpy is
+# not available"). We pin numpy<2 only on that platform; every
+# other platform stays free to resolve the latest numpy.
 gguf
-numpy
+numpy<2; sys_platform == "darwin" and platform_machine == "x86_64"
+numpy; sys_platform != "darwin" or platform_machine != "x86_64"
 torch
 pyyaml
 sentencepiece
