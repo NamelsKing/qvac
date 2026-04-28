@@ -273,8 +273,7 @@ function getTestPaths (modelsDir = null) {
     modelsDir: actualModelsDir,
     samplesDir,
     // GGUF backend ships a single .gguf per model. Default
-    // points at the q8_0 TDT GGUF (closest analogue to the legacy ONNX
-    // `parakeet-tdt-0.6b-v3-onnx` directory). Override per-test when a
+    // points at the q8_0 TDT GGUF. Override per-test when a
     // different model type is needed.
     modelPath: path.join(actualModelsDir, 'parakeet-tdt-0.6b-v3.q8_0.gguf'),
     audioPath: path.join(samplesDir, 'sample-16k.wav'),
@@ -397,9 +396,8 @@ async function downloadFile (url, destPath) {
 
 /**
  * Ensures the default test GGUF model is downloaded and available.
- * The ggml backend ships a single `.gguf` per checkpoint; we default to the
- * q8_0 quantisation of `parakeet-tdt-0.6b-v3` since it's the closest
- * analogue to the legacy onnx multilingual reference.
+ * The ggml backend ships a single `.gguf` per checkpoint; default to the
+ * q8_0 quantisation of `parakeet-tdt-0.6b-v3`
  *
  * Model files can be staged in two ways:
  *   1. Download from HuggingFace (slow on first run; cached afterwards).

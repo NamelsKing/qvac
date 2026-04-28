@@ -17,10 +17,6 @@
 //      EOU) or `diarize_samples()` (Sortformer),
 //   4. wrap the engine result in `Transcript` and fire the on-segment
 //      callback.
-//
-// The public surface (constructor, `load()`, `process(any)`, `cancel()`,
-// `setOnSegmentCallback()`, ...) is unchanged so existing JS callers keep
-// working modulo the model-files change (`.gguf` instead of an ONNX dir).
 
 #include <atomic>
 #include <cstdint>
@@ -116,9 +112,7 @@ public:
       std::unique_ptr<std::basic_streambuf<char>>&& streambuf) override;
   void waitForLoadInitialization() override { load(); }
 
-  // Two streaming overloads -- mirror the legacy onnx binding's API so
-  // existing JS callers' chunk-style file delivery keeps working without
-  // changes. The ggml backend doesn't actually care about chunking; it
+  // Two streaming overloads. The ggml backend doesn't actually care about chunking; it
   // just buffers the bytes until `completed=true`, then materialises them
   // into a temp file on `load()`.
   void set_weights_for_file(
@@ -193,10 +187,9 @@ private:
   int                                  sample_rate_ = 16000;
 
   // ── Token / sentinel constants ─────────────────────────────────────────
-  // These match the legacy onnx binding so JS-side string parsers don't
-  // need to change. The engine itself uses different vocab IDs internally;
-  // we surface only the "[No speech detected]" / "[Audio too short]" /
-  // ... text sentinels through Transcript::text.
+  // The engine itself uses different vocab IDs internally; we surface only 
+  // the "[No speech detected]" / "[Audio too short]" / ... text sentinels 
+  // through Transcript::text.
   static constexpr const char* ERR_NO_SPEECH        = "[No speech detected]";
   static constexpr const char* ERR_AUDIO_SHORT      = "[Audio too short]";
   static constexpr const char* ERR_MODEL_NOT_READY  = "[Model not ready]";

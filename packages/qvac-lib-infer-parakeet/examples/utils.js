@@ -95,8 +95,7 @@ function convertRawToFloat32 (rawBuffer) {
 
 /**
  * Stream a single GGUF file into the addon via the
- * `loadWeights({filename, chunk, completed})` API. The ggml backend
- * collapses the legacy onnx multi-file load into one call.
+ * `loadWeights({filename, chunk, completed})` API.
  *
  * @param {Object} parakeet - ParakeetInterface instance
  * @param {string} ggufPath - absolute path to the .gguf file

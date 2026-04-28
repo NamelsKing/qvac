@@ -27,8 +27,7 @@ using namespace qvac_lib_inference_addon_cpp;
 
 namespace {
 
-// HH:MM:SS.fff for Sortformer speaker-segment formatting (kept identical to
-// the legacy onnx binding so JS-side parsers don't need to change).
+// HH:MM:SS.fff for Sortformer speaker-segment formatting
 std::string formatSeconds(float seconds) {
   if (seconds < 0.0f) seconds = 0.0f;
   const int    hours = static_cast<int>(seconds) / 3600;
@@ -213,7 +212,7 @@ void ParakeetModel::load() {
     // Two ways to source the GGUF:
     //   1. Caller streamed bytes via setWeightsForFile() -- we materialise
     //      them to a temp file. This is the path the addon framework
-    //      uses by default (and how the legacy onnx binding worked).
+    //      uses by default.
     //   2. Caller pre-set `cfg_.modelPath` to an existing GGUF on disk.
     //      We skip the temp-file dance and load from the path directly.
     // Prefer cfg_.modelPath when it points at an existing file -- avoids
@@ -352,9 +351,6 @@ void ParakeetModel::reset() {
 
 void ParakeetModel::warmup() {
   if (is_warmed_up_ || !is_loaded_) return;
-  // The legacy onnx binding ran a dummy 1-second silence through the
-  // pipeline to JIT the encoder graphs. The ggml backend's graphs are
-  // built lazily on first call too, so we keep the same gesture.
   Input silence(static_cast<size_t>(SAMPLE_RATE), 0.0f);
   try {
     runAsrProcess_(silence);
@@ -827,8 +823,7 @@ std::string ParakeetModel::getName() const {
 
 RuntimeStats ParakeetModel::runtimeStats() const {
   // RuntimeStats is a `vector<pair<string, variant<double, int64_t>>>` --
-  // a flat key/value list. We surface the same fields the legacy onnx
-  // binding did so JS-side reporting tooling keeps working.
+  // a flat key/value list.
   RuntimeStats stats;
   stats.emplace_back("processCalls",        static_cast<int64_t>(processCalls_));
   stats.emplace_back("totalSamples",        static_cast<int64_t>(totalSamples_));
@@ -844,8 +839,7 @@ RuntimeStats ParakeetModel::runtimeStats() const {
   stats.emplace_back("melSpecMs",           static_cast<int64_t>(melSpecMs_));
   stats.emplace_back("totalEncodedFrames",  static_cast<int64_t>(totalEncodedFrames_));
 
-  // audioDurationMs derived from samples / sample_rate, mirroring the
-  // legacy onnx binding's reporting for downstream RTF calculations.
+  // audioDurationMs derived from samples / sample_rate
   const double sr = sample_rate_ > 0
                         ? static_cast<double>(sample_rate_)
                         : static_cast<double>(SAMPLE_RATE);

@@ -1,22 +1,5 @@
 // C++ unit tests for the pure-ggml ParakeetModel.
-//
-// The legacy onnx version exposed a much wider private surface (vocab_,
-// getLanguageToken, multi-file ONNX session loaders, mel filterbank
-// helpers, etc.). Those have all been folded into qvac_parakeet::Engine
-// so the binding's ParakeetModel is now a thin wrapper. This test file
-// covers the wrapper's externally-observable contract:
-//
-//   1. Construction + config wiring
-//   2. Lifecycle (load/unload/reload/reset/cancel) and the "model not
-//      loaded" error sentinels
-//   3. Streaming weight ingestion (setWeightsForFile) -- both the
-//      span-based and streambuf-based overloads -- and that non-GGUF
-//      filenames are ignored cleanly
-//   4. process() / process(any) input dispatching, including empty-audio
-//      tolerance and unsupported-input rejection
-//   5. RuntimeStats shape + that they accumulate across calls
-//   6. Static helpers (preprocessAudioData)
-//
+
 // Tests that require an actual GGUF on disk are guarded with a
 // `QVAC_TEST_GGUF` env-var fallback so the suite can run as part of CI
 // even when no model is present (skipping the few "load + transcribe"
