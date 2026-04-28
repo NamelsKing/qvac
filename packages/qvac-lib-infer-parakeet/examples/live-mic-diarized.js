@@ -3,12 +3,12 @@
 /**
  * Live-mic transcription + diarization example.
  *
- * Captures the default input device via `sox -d` and feeds chunks
- * into two streaming binding instances: a Sortformer
- * SortformerStreamSession (stable speaker IDs across chunks via the
- * session's internal rolling history) and an ASR StreamSession.
- * Each printed line is tagged with the dominant speaker for that
- * chunk. Press Ctrl-C to flush and exit.
+ * Captures the default input device via `sox -d`, fans each chunk
+ * out to two pushable async-iterables (one for the ASR engine, one
+ * for the Sortformer engine), and feeds both to the public
+ * `TranscriptionParakeet` class. Each printed line is tagged with
+ * the dominant speaker for that chunk; press Ctrl-C to flush and
+ * exit.
  *
  * Usage:
  *   bare examples/live-mic-diarized.js \
@@ -19,19 +19,10 @@
 const path = require('bare-path')
 const process = require('bare-process')
 const subprocess = require('bare-subprocess')
-const binding = require('../binding.js')
-const { ParakeetInterface } = require('../parakeet.js')
-const {
-  setupLogger,
-  loadModelWeights,
-  validatePaths,
-  createJobTracker
-} = require('./utils.js')
+const TranscriptionParakeet = require('../index.js')
+const addonLogging = require('../addonLogging.js')
+const { setupLogger, validatePaths, pushableStream } = require('./utils.js')
 
-const SAMPLE_RATE = 16000
-const CHUNK_MS = 2000
-const HISTORY_MS = 30000
-const SAMPLES_PER_CHUNK = Math.floor(SAMPLE_RATE * CHUNK_MS / 1000)
 const CAPTURE_CMD = 'sox -d -t raw -r 16000 -b 16 -c 1 -e signed-integer -L -'
 
 const SILENCE_SENTINELS = new Set([
@@ -45,20 +36,22 @@ function isSilenceText (text) {
   return text.length === 0 || SILENCE_SENTINELS.has(text)
 }
 
-function pcmInt16ToFloat32 (buf) {
-  const evenBytes = buf.length - (buf.length % 2)
-  const view = new DataView(buf.buffer, buf.byteOffset, evenBytes)
-  const samples = new Float32Array(evenBytes / 2)
-  for (let i = 0; i < samples.length; i++) {
-    samples[i] = view.getInt16(i * 2, true) / 32768
+function parseArgs () {
+  const args = { asrModel: null, diarModel: null, accumulate: false }
+  const argv = Bare.argv.slice(2)
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--asr-model' || a === '-m') args.asrModel = argv[++i]
+    else if (a === '--diar-model' || a === '-d') args.diarModel = argv[++i]
+    else if (a === '--accumulate') args.accumulate = true
   }
-  return { samples, consumed: evenBytes }
+  return args
 }
 
-function dominantSpeaker (sortformerText, fallback = -1) {
+function dominantSpeaker (sortformerSegments, fallback = -1) {
   const totals = new Map()
-  for (const line of sortformerText.split('\n')) {
-    const m = line.match(/Speaker\s+(\d+)\s*:\s*([\d.:]+)\s*-\s*([\d.:]+)/)
+  for (const seg of sortformerSegments) {
+    const m = seg.text.match(/Speaker\s+(\d+)\s*:\s*([\d.:]+)\s*-\s*([\d.:]+)/)
     if (!m) continue
     const toSec = (ts) => {
       const parts = ts.split(':').map(parseFloat)
@@ -78,36 +71,6 @@ function dominantSpeaker (sortformerText, fallback = -1) {
   return bestId
 }
 
-function parseArgs () {
-  const args = { asrModel: null, diarModel: null, accumulate: false }
-  const argv = Bare.argv.slice(2)
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]
-    if (a === '--asr-model' || a === '-m') args.asrModel = argv[++i]
-    else if (a === '--diar-model' || a === '-d') args.diarModel = argv[++i]
-    else if (a === '--accumulate') args.accumulate = true
-  }
-  return args
-}
-
-function makeBindingCallback (trackerBox, stoppingRef) {
-  return (handle, event, jobId, output, error) => {
-    const tracker = trackerBox.current
-    if (error) {
-      if (!stoppingRef.value) console.error('Error:', error)
-      return
-    }
-    if (event === 'Output' && output) {
-      const segs = Array.isArray(output) ? output : [output]
-      for (const s of segs) {
-        if (s && s.text && s.toAppend) tracker.transcriptions.push(s)
-      }
-      tracker.markOutput()
-    }
-    if (event === 'JobEnded') tracker.markJobEnded()
-  }
-}
-
 async function main () {
   const args = parseArgs()
   if (!args.asrModel || !args.diarModel) {
@@ -115,52 +78,62 @@ async function main () {
     process.exit(1)
   }
 
-  setupLogger(binding)
-  const stopping = { value: false }
+  setupLogger(addonLogging)
+  let stopping = false
 
   const asrPath = path.resolve(args.asrModel)
   const diarPath = path.resolve(args.diarModel)
-  if (!validatePaths({ model: asrPath })) { binding.releaseLogger(); process.exit(1) }
-  if (!validatePaths({ model: diarPath })) { binding.releaseLogger(); process.exit(1) }
+  if (!validatePaths({ model: asrPath })) { addonLogging.releaseLogger(); process.exit(1) }
+  if (!validatePaths({ model: diarPath })) { addonLogging.releaseLogger(); process.exit(1) }
 
   console.log(`Loading ${asrPath}...`)
   console.log(`Loading ${diarPath}...`)
 
-  const asrTracker = { current: createJobTracker() }
-  const diarTracker = { current: createJobTracker() }
+  const asr = new TranscriptionParakeet({
+    files: { model: asrPath },
+    config: {
+      parakeetConfig: {
+        streaming: true,
+        streamingChunkMs: 2000
+      }
+    }
+  })
+  const diar = new TranscriptionParakeet({
+    files: { model: diarPath },
+    config: {
+      parakeetConfig: {
+        streaming: true,
+        streamingChunkMs: 2000,
+        streamingHistoryMs: 30000
+      }
+    }
+  })
 
-  const asr = new ParakeetInterface(binding, {
-    modelPath: asrPath,
-    streaming: true,
-    streamingChunkMs: CHUNK_MS
-  }, makeBindingCallback(asrTracker, stopping), () => {})
-
-  const diar = new ParakeetInterface(binding, {
-    modelPath: diarPath,
-    streaming: true,
-    streamingChunkMs: CHUNK_MS,
-    streamingHistoryMs: HISTORY_MS
-  }, makeBindingCallback(diarTracker, stopping), () => {})
-
-  await loadModelWeights(asr, asrPath)
-  await loadModelWeights(diar, diarPath)
-  await asr.activate()
-  await diar.activate()
+  await asr.load()
+  await diar.load()
   console.log('Listening (Ctrl-C to stop)...\n')
 
-  const [bin, ...rest] = CAPTURE_CMD.split(/\s+/)
-  const child = subprocess.spawn(bin, rest, { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = subprocess.spawn(CAPTURE_CMD.split(' ')[0],
+    CAPTURE_CMD.split(' ').slice(1),
+    { stdio: ['ignore', 'pipe', 'pipe'] })
   child.on('error', (err) => {
-    console.error(`\nFailed to spawn "${bin}": ${err.message}`)
+    console.error(`\nFailed to spawn capture command: ${err.message}`)
     console.error('Install sox (brew install sox / apt install sox / choco install sox).')
     process.exit(1)
   })
   child.stderr.on('data', () => {})
 
+  // ---------- Output helpers ----------
   let lineOpen = false
   let lineSpeaker = null
+  let lastSpeaker = -1
+
   function flushLine () {
-    if (lineOpen) { process.stdout.write('\n'); lineOpen = false; lineSpeaker = null }
+    if (lineOpen) {
+      process.stdout.write('\n')
+      lineOpen = false
+      lineSpeaker = null
+    }
   }
   function emitTranscript (speaker, text) {
     if (isSilenceText(text)) {
@@ -183,88 +156,66 @@ async function main () {
     }
   }
 
-  let pcmTail = Buffer.alloc(0)
-  let floatBuf = new Float32Array(0)
-  let processing = Promise.resolve()
-
-  // Sortformer's streaming session emits a segment only when a speaker
-  // span boundary is crossed (start / stop / change). While the same
-  // speaker keeps talking across multiple chunks, no new segment
-  // fires, so the per-chunk sortformer output for those chunks is
-  // empty and dominantSpeaker() would return -1 ("speaker_?"). Cache
-  // the last speaker we saw and reuse it whenever this chunk has ASR
-  // text but no fresh sortformer segment -- the speaker hasn't
-  // changed, only Sortformer hasn't repeated itself.
-  let lastSpeaker = -1
-
-  function emit (chunk) {
-    processing = processing
-      .then(async () => {
-        asrTracker.current = createJobTracker()
-        diarTracker.current = createJobTracker()
-        const at = asrTracker.current
-        const dt = diarTracker.current
-
-        const asrPromise = (async () => {
-          await asr.append({ type: 'audio', data: chunk.buffer })
-          await asr.append({ type: 'end of job' })
-          await Promise.race([at.promise, new Promise(resolve => setTimeout(resolve, 30000))])
-        })()
-
-        const diarPromise = (async () => {
-          await diar.append({ type: 'audio', data: chunk.buffer })
-          await diar.append({ type: 'end of job' })
-          await Promise.race([dt.promise, new Promise(resolve => setTimeout(resolve, 30000))])
-        })()
-
-        await Promise.all([asrPromise, diarPromise])
-
-        const text = at.transcriptions
-          .map(s => s.text).join(' ').trim().replace(/\s+/g, ' ')
-        const sortformerText = dt.transcriptions.map(s => s.text).join('\n')
-        let speaker = dominantSpeaker(sortformerText, -1)
-        if (speaker >= 0) {
-          lastSpeaker = speaker
-        } else if (text.length > 0 && lastSpeaker >= 0) {
-          // Same speaker continuing -- Sortformer didn't repeat the
-          // segment, but ASR proves someone is still talking.
-          speaker = lastSpeaker
-        }
-        emitTranscript(speaker, text)
-      })
-      .catch(err => {
-        if (!stopping.value) console.error('Inference error:', err.message)
-      })
-  }
-
+  // ---------- Audio fan-out ----------
+  const asrStream = pushableStream()
+  const diarStream = pushableStream()
   child.stdout.on('data', (chunk) => {
-    if (stopping.value) return
-    const merged = Buffer.concat([pcmTail, chunk])
-    const { samples, consumed } = pcmInt16ToFloat32(merged)
-    pcmTail = merged.slice(consumed)
-    if (samples.length === 0) return
-    const next = new Float32Array(floatBuf.length + samples.length)
-    next.set(floatBuf, 0)
-    next.set(samples, floatBuf.length)
-    floatBuf = next
-    while (floatBuf.length >= SAMPLES_PER_CHUNK) {
-      const out = floatBuf.slice(0, SAMPLES_PER_CHUNK)
-      floatBuf = floatBuf.slice(SAMPLES_PER_CHUNK)
-      emit(out)
-    }
+    if (stopping) return
+    asrStream.push(chunk)
+    diarStream.push(chunk)
   })
 
+  // ---------- Diarization side: maintain a rolling list of recent
+  // ---------- Sortformer segments so we can resolve `lastSpeaker`.
+  const recentDiarSegments = []
+  const diarRunPromise = (async () => {
+    const response = await diar.run(diarStream)
+    await response
+      .onUpdate(out => {
+        const items = Array.isArray(out) ? out : [out]
+        for (const s of items) {
+          if (!s || !s.text) continue
+          if (isSilenceText(s.text)) continue
+          recentDiarSegments.push(s)
+          if (recentDiarSegments.length > 64) recentDiarSegments.shift()
+          const speaker = dominantSpeaker([s], -1)
+          if (speaker >= 0) lastSpeaker = speaker
+        }
+      })
+      .await()
+  })()
+
+  // ---------- ASR side: each segment is tagged with `lastSpeaker`,
+  // ---------- which the diarization side keeps fresh.
+  const asrRunPromise = (async () => {
+    const response = await asr.run(asrStream)
+    await response
+      .onUpdate(out => {
+        const items = Array.isArray(out) ? out : [out]
+        const text = items
+          .filter(s => s && s.text && s.toAppend)
+          .map(s => s.text)
+          .join(' ')
+          .trim()
+          .replace(/\s+/g, ' ')
+        emitTranscript(lastSpeaker, text)
+      })
+      .await()
+  })()
+
+  // ---------- Shutdown ----------
   async function shutdown () {
-    if (stopping.value) return
-    stopping.value = true
+    if (stopping) return
+    stopping = true
     console.log('\nStopping...')
-    try { child.kill('SIGTERM') } catch (e) {}
-    if (floatBuf.length > 0) emit(floatBuf)
-    await processing
+    try { child.kill('SIGTERM') } catch (e) { /* ignore */ }
+    asrStream.end()
+    diarStream.end()
+    try { await Promise.all([asrRunPromise, diarRunPromise]) } catch (e) { /* swallow */ }
     flushLine()
-    try { await asr.destroyInstance() } catch (e) {}
-    try { await diar.destroyInstance() } catch (e) {}
-    binding.releaseLogger()
+    try { await asr.unload() } catch (e) { /* ignore */ }
+    try { await diar.unload() } catch (e) { /* ignore */ }
+    addonLogging.releaseLogger()
     process.exit(0)
   }
 
@@ -275,6 +226,6 @@ async function main () {
 
 main().catch(err => {
   console.error('Error:', err)
-  binding.releaseLogger()
+  addonLogging.releaseLogger()
   process.exit(1)
 })

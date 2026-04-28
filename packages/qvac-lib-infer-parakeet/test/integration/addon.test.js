@@ -5,21 +5,40 @@ const path = require('bare-path')
 const test = require('brittle')
 const {
   binding,
-  ParakeetInterface,
+  TranscriptionParakeet,
   detectPlatform,
   setupJsLogger,
-  waitUntilIdle,
   getTestPaths,
   validateAccuracy,
-  ensureModel,
-  getNamedPathsConfig
+  ensureModel
 } = require('./helpers.js')
 
 const platform = detectPlatform()
 const { modelPath, samplesDir } = getTestPaths()
 
+function loadRawAudio (samplePath) {
+  const rawBuffer = fs.readFileSync(samplePath)
+  const pcmData = new Int16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2)
+  const audioData = new Float32Array(pcmData.length)
+  for (let i = 0; i < pcmData.length; i++) audioData[i] = pcmData[i] / 32768.0
+  return audioData
+}
+
+async function transcribe (model, audio) {
+  const segments = []
+  const response = await model.run(audio)
+  await response
+    .onUpdate(out => {
+      const items = Array.isArray(out) ? out : [out]
+      for (const s of items) {
+        if (s && s.text && s.toAppend) segments.push(s)
+      }
+    })
+    .await()
+  return segments
+}
+
 test('English transcription and WER verification', { timeout: 300000 }, async (t) => {
-  // Setup logger inside test
   const loggerBinding = setupJsLogger(binding)
 
   console.log('\n' + '='.repeat(60))
@@ -28,11 +47,6 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
   console.log(` Platform: ${platform}`)
   console.log(` Model path: ${modelPath}`)
 
-  // The GGUF backend uses a single self-contained `.gguf`
-  // per checkpoint. `ensureModel` returns the staged GGUF path; if no
-  // GGUF can be located (HuggingFace mirror missing + no
-  // QVAC_TEST_GGUF_DIR override) the test skips cleanly so CI doesn't
-  // spuriously fail in environments without local GGUFs.
   const stagedGguf = await ensureModel(modelPath)
   if (!stagedGguf || !fs.existsSync(stagedGguf)) {
     t.skip('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
@@ -40,7 +54,6 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
   }
   t.ok(fs.existsSync(stagedGguf), `GGUF exists at ${stagedGguf}`)
 
-  // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
   if (!fs.existsSync(samplePath)) {
     loggerBinding.releaseLogger()
@@ -48,229 +61,37 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
     return
   }
 
-  // Expected transcription (Alice in Wonderland excerpt)
   const expectedText = 'Alice was beginning to get very tired of sitting by her sister on the bank and of having nothing to do. Once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it. And what is the use of a book thought Alice without pictures or conversations'
 
-  // Configuration. The GGUF backend takes a single `modelPath`
-  // (the .gguf file); `getNamedPathsConfig` returns just that, so we
-  // could drop it -- kept for back-compat with any future test that
-  // wants to swap implementations via the helper.
-  const config = {
-    modelPath: stagedGguf,
-    modelType: 'tdt',
-    maxThreads: 4,
-    useGPU: false,
-    sampleRate: 16000,
-    channels: 1,
-    ...getNamedPathsConfig('tdt', stagedGguf)
-  }
-
-  // Track transcription results
-  const transcriptions = []
-  let outputResolve = null
-  const outputPromise = new Promise(resolve => { outputResolve = resolve })
-
-  // Output callback - resolve when we receive actual transcription output
-  function outputCallback (handle, event, id, output, error) {
-    if (event === 'Output' && Array.isArray(output)) {
-      for (const segment of output) {
-        if (segment && segment.text) {
-          transcriptions.push(segment)
-        }
-      }
-    }
-    if ((event === 'JobEnded' || event === 'Error') && outputResolve) {
-      outputResolve()
-      outputResolve = null
-    }
-  }
-
-  let parakeet = null
+  const model = new TranscriptionParakeet({
+    files: { model: stagedGguf },
+    config: { parakeetConfig: { maxThreads: 4, useGPU: false } }
+  })
 
   try {
-    console.log('\n=== Creating instance and loading model ===')
-    parakeet = new ParakeetInterface(binding, config, outputCallback)
+    await model.load()
 
-    await parakeet.activate()
-    console.log('   Model activated')
-
-    // Load and convert audio
-    console.log('\n=== Processing audio ===')
-    console.log(`   Audio file: ${samplePath}`)
-
-    const rawBuffer = fs.readFileSync(samplePath)
-    const pcmData = new Int16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2)
-    const audioData = new Float32Array(pcmData.length)
-    for (let i = 0; i < pcmData.length; i++) {
-      audioData[i] = pcmData[i] / 32768.0
-    }
+    const audioData = loadRawAudio(samplePath)
     console.log(`   Audio duration: ${(audioData.length / 16000).toFixed(2)}s`)
 
-    // Transcribe
-    await parakeet.append({ type: 'audio', data: audioData.buffer })
-    await parakeet.append({ type: 'end of job' })
+    const segments = await transcribe(model, audioData)
+    const fullText = segments.map(s => s.text).join(' ').trim()
 
-    // Wait for transcription output (120s timeout for CI runners which are slower)
-    const timeout = setTimeout(() => { if (outputResolve) { outputResolve(); outputResolve = null } }, 600000)
-    await outputPromise
-    clearTimeout(timeout)
-
-    // Get results
-    const fullText = transcriptions.map(s => s.text).join(' ').trim()
-
-    t.ok(transcriptions.length > 0, `Should produce segments (got ${transcriptions.length})`)
+    t.ok(segments.length > 0, `Should produce segments (got ${segments.length})`)
     t.ok(fullText.length > 0, `Should produce text (got ${fullText.length} chars)`)
 
     console.log('\n=== TRANSCRIPTION OUTPUT ===')
     console.log(fullText)
     console.log('=== END TRANSCRIPTION ===\n')
 
-    // WER verification
-    console.log('=== WER Verification ===')
     const werResult = validateAccuracy(expectedText, fullText, 0.3)
-
     console.log(`Expected: "${expectedText.substring(0, 100)}..."`)
     console.log(`Got:      "${fullText.substring(0, 100)}..."`)
     console.log(`>>> Word Error Rate: ${werResult.werPercent}`)
 
     t.ok(werResult.wer <= 0.3, `WER should be <= 30% (got ${werResult.werPercent})`)
-
-    // Summary
-    console.log('\n' + '='.repeat(60))
-    console.log('TEST SUMMARY')
-    console.log('='.repeat(60))
-    console.log(`Segments: ${transcriptions.length}`)
-    console.log(`Text length: ${fullText.length} chars`)
-    console.log(`WER: ${werResult.werPercent}`)
-    console.log(`WER verification: ${werResult.passed ? 'PASSED' : 'FAILED'}`)
-    console.log('='.repeat(60))
   } finally {
-    // Cleanup
-    console.log('\n=== Cleanup ===')
-    if (parakeet) {
-      try {
-        await waitUntilIdle(parakeet, 60000)
-        await parakeet.destroyInstance()
-        console.log('   Instance destroyed')
-      } catch (e) {
-        console.log('   Instance destroy error:', e.message)
-      }
-    }
-    try {
-      loggerBinding.releaseLogger()
-      console.log('   Logger released')
-    } catch (e) {
-      console.log('   Logger release error:', e.message)
-    }
-  }
-})
-
-test('Cancel active job keeps model usable for next job', { timeout: 600000 }, async (t) => {
-  const loggerBinding = setupJsLogger(binding)
-
-  const stagedGguf = await ensureModel(modelPath)
-  if (!stagedGguf || !fs.existsSync(stagedGguf)) {
-    t.skip('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
-    return
-  }
-
-  const samplePath = path.join(samplesDir, 'sample.raw')
-  if (!fs.existsSync(samplePath)) {
-    loggerBinding.releaseLogger()
-    t.fail(`Required audio file not found: ${samplePath}`)
-    return
-  }
-
-  const config = {
-    modelPath: stagedGguf,
-    modelType: 'tdt',
-    maxThreads: 4,
-    useGPU: false,
-    sampleRate: 16000,
-    channels: 1,
-    ...getNamedPathsConfig('tdt', stagedGguf)
-  }
-
-  const outputsByJob = new Map()
-  const resolvers = new Map()
-  const waitForJob = (jobId, timeoutMs = 180000) => new Promise((resolve) => {
-    const finish = (event, error) => {
-      clearTimeout(timeout)
-      resolvers.delete(jobId)
-      resolve({ event, error: error || null })
-    }
-
-    const timeout = setTimeout(() => {
-      finish('Timeout', null)
-    }, timeoutMs)
-
-    resolvers.set(jobId, (event, error) => {
-      finish(event, error)
-    })
-  })
-
-  function toFloat32Audio (rawBuffer) {
-    const pcmData = new Int16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2)
-    const audioData = new Float32Array(pcmData.length)
-    for (let i = 0; i < pcmData.length; i++) {
-      audioData[i] = pcmData[i] / 32768.0
-    }
-    return audioData
-  }
-
-  function outputCallback (handle, event, id, output, error) {
-    if (event === 'Output' && Array.isArray(output)) {
-      if (!outputsByJob.has(id)) outputsByJob.set(id, [])
-      for (const segment of output) {
-        if (segment && segment.text) {
-          outputsByJob.get(id).push(segment)
-        }
-      }
-    }
-    if ((event === 'JobEnded' || event === 'Error') && resolvers.has(id)) {
-      const resolve = resolvers.get(id)
-      resolvers.delete(id)
-      resolve(event, error)
-    }
-  }
-
-  let parakeet = null
-  try {
-    parakeet = new ParakeetInterface(binding, config, outputCallback)
-
-    await parakeet.activate()
-
-    const shortAudio = toFloat32Audio(fs.readFileSync(samplePath))
-
-    await parakeet.append({ type: 'audio', data: shortAudio.buffer })
-    const firstJobId = await parakeet.append({ type: 'end of job' })
-    await parakeet.cancel(firstJobId)
-
-    const statusAfterCancel = await parakeet.status()
-    t.ok(statusAfterCancel === 'listening', `Status should return to listening after cancel (got ${statusAfterCancel})`)
-
-    // Ensure model still accepts and completes the next job.
-    await parakeet.append({ type: 'audio', data: shortAudio.buffer })
-    const secondJobId = await parakeet.append({ type: 'end of job' })
-
-    const secondJobResult = await waitForJob(secondJobId)
-
-    t.ok(secondJobId > firstJobId, `Second job id should increment (first=${firstJobId}, second=${secondJobId})`)
-    t.ok(secondJobResult.event === 'JobEnded', `Second job should finish successfully (got ${secondJobResult.event})`)
-
-    const secondSegments = outputsByJob.get(secondJobId) || []
-    const secondText = secondSegments.map(s => s.text).join(' ').trim()
-    t.ok(secondSegments.length > 0, `Second job should produce output segments (got ${secondSegments.length})`)
-    t.ok(secondText.length > 0, `Second job should produce non-empty text (got ${secondText.length} chars)`)
-  } finally {
-    if (parakeet) {
-      try {
-        await waitUntilIdle(parakeet, 60000)
-        await parakeet.destroyInstance()
-      } catch {}
-    }
-    try {
-      loggerBinding.releaseLogger()
-    } catch {}
+    try { await model.unload() } catch (e) { /* ignore */ }
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })

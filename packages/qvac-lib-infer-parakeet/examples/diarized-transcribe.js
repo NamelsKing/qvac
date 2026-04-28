@@ -5,7 +5,8 @@
  *
  * Runs Sortformer to find speaker time-segments, then transcribes
  * each speaker's audio slice with the ASR model. Output is a
- * "Speaker N: ..." per-segment transcript.
+ * "Speaker N: ..." per-segment transcript. Both engines run
+ * through the public `TranscriptionParakeet` class.
  *
  * Usage:
  *   bare examples/diarized-transcribe.js \
@@ -15,16 +16,14 @@
 /* global Bare */
 const path = require('bare-path')
 const process = require('bare-process')
-const binding = require('../binding.js')
-const { ParakeetInterface } = require('../parakeet.js')
+const TranscriptionParakeet = require('../index.js')
+const addonLogging = require('../addonLogging.js')
 const {
   setupLogger,
   parseWavFile,
   convertRawToFloat32,
-  loadModelWeights,
-  validatePaths,
-  createJobTracker,
-  readFileAsStream
+  readFileAsStream,
+  validatePaths
 } = require('./utils.js')
 
 const SAMPLE_RATE = 16000
@@ -39,6 +38,13 @@ function parseArgs () {
     else if (a === '--audio' || a === '-a') args.audio = argv[++i]
   }
   return args
+}
+
+async function loadAudio (audioPath) {
+  const ext = path.extname(audioPath).toLowerCase()
+  if (ext === '.wav') return parseWavFile(audioPath)
+  const rawBuffer = await readFileAsStream(audioPath)
+  return convertRawToFloat32(rawBuffer)
 }
 
 function parseSpeakerSegments (sortformerText) {
@@ -69,11 +75,28 @@ function sliceAudio (audioData, startS, endS) {
   return audioData.slice(i0, i1)
 }
 
-async function loadAudio (audioPath) {
-  const ext = path.extname(audioPath).toLowerCase()
-  if (ext === '.wav') return parseWavFile(audioPath)
-  const rawBuffer = await readFileAsStream(audioPath)
-  return convertRawToFloat32(rawBuffer)
+async function transcribeSegments (asrModel, audioData, segments) {
+  const results = []
+  for (const seg of segments) {
+    const slice = sliceAudio(audioData, seg.start, seg.end)
+    if (!slice) {
+      results.push({ speaker: seg.speaker, text: '[no audio]' })
+      continue
+    }
+    const segments = []
+    const response = await asrModel.run(slice)
+    await response
+      .onUpdate(out => {
+        const items = Array.isArray(out) ? out : [out]
+        for (const s of items) {
+          if (s && s.text && s.toAppend) segments.push(s)
+        }
+      })
+      .await()
+    const text = segments.map(s => s.text).join(' ').trim()
+    results.push({ speaker: seg.speaker, text: text || '[no speech]' })
+  }
+  return results
 }
 
 async function main () {
@@ -83,98 +106,63 @@ async function main () {
     process.exit(1)
   }
 
-  setupLogger(binding)
-  const asrModel = path.resolve(args.asrModel)
-  const diarModel = path.resolve(args.diarModel)
+  setupLogger(addonLogging)
+  const asrPath = path.resolve(args.asrModel)
+  const diarPath = path.resolve(args.diarModel)
   const audioPath = path.resolve(args.audio)
-  if (!validatePaths({ model: asrModel, audio: audioPath })) {
-    binding.releaseLogger()
+  if (!validatePaths({ model: asrPath, audio: audioPath })) {
+    addonLogging.releaseLogger()
     process.exit(1)
   }
-  if (!validatePaths({ model: diarModel })) {
-    binding.releaseLogger()
+  if (!validatePaths({ model: diarPath })) {
+    addonLogging.releaseLogger()
     process.exit(1)
   }
 
-  console.log(`ASR:   ${asrModel}`)
-  console.log(`Diar:  ${diarModel}`)
-  console.log(`Audio: ${audioPath}\n`)
+  console.log(`ASR:   ${asrPath}`)
+  console.log(`Diar:  ${diarPath}`)
+  console.log(`Audio: ${audioPath}`)
 
   const audioData = await loadAudio(audioPath)
   console.log(`Audio: ${(audioData.length / SAMPLE_RATE).toFixed(2)}s\n`)
 
-  const sfTracker = createJobTracker()
-  const sf = new ParakeetInterface(binding, { modelPath: diarModel },
-    (handle, event, id, output) => {
-      if (event === 'Output' && output) {
-        const segs = Array.isArray(output) ? output : [output]
-        for (const s of segs) if (s && s.text) sfTracker.transcriptions.push(s)
-        sfTracker.markOutput()
+  // Step 1: diarize.
+  const diarModel = new TranscriptionParakeet({ files: { model: diarPath } })
+  await diarModel.load()
+  const sortformerSegments = []
+  const diarResponse = await diarModel.run(audioData)
+  await diarResponse
+    .onUpdate(out => {
+      const items = Array.isArray(out) ? out : [out]
+      for (const s of items) {
+        if (s && s.text) sortformerSegments.push(s)
       }
-      if (event === 'JobEnded') sfTracker.markJobEnded()
     })
-  await loadModelWeights(sf, diarModel)
-  await sf.activate()
-  await sf.append({ type: 'audio', data: audioData.buffer })
-  await sf.append({ type: 'end of job' })
+    .await()
+  await diarModel.unload()
 
-  const sfTimeout = setTimeout(() => sfTracker.resolve(),
-    Math.max(30000, audioData.length / SAMPLE_RATE * 2000))
-  await sfTracker.promise
-  clearTimeout(sfTimeout)
-
-  const sfText = sfTracker.transcriptions.map(s => s.text).join(' ').trim()
-  await sf.destroyInstance()
-
+  const sfText = sortformerSegments.map(s => s.text).join(' ').trim()
   const segments = parseSpeakerSegments(sfText)
   if (segments.length === 0) {
     console.log('No speakers detected.')
-    binding.releaseLogger()
+    addonLogging.releaseLogger()
     return
   }
 
-  const activeTracker = { current: createJobTracker() }
-  const asr = new ParakeetInterface(binding, { modelPath: asrModel },
-    (handle, event, id, output) => {
-      const tracker = activeTracker.current
-      if (event === 'Output' && output) {
-        const segs = Array.isArray(output) ? output : [output]
-        for (const s of segs) if (s && s.text && s.toAppend) tracker.transcriptions.push(s)
-        tracker.markOutput()
-      }
-      if (event === 'JobEnded') tracker.markJobEnded()
-    })
-  await loadModelWeights(asr, asrModel)
-  await asr.activate()
-
-  const results = []
-  for (const seg of segments) {
-    const slice = sliceAudio(audioData, seg.start, seg.end)
-    if (!slice) {
-      results.push({ speaker: seg.speaker, text: '[no audio]' })
-      continue
-    }
-    activeTracker.current = createJobTracker()
-    const tracker = activeTracker.current
-    await asr.append({ type: 'audio', data: slice.buffer })
-    await asr.append({ type: 'end of job' })
-    const t = setTimeout(() => tracker.resolve(),
-      Math.max(30000, (seg.end - seg.start) * 4000))
-    await tracker.promise
-    clearTimeout(t)
-    const text = tracker.transcriptions.map(s => s.text).join(' ').trim()
-    results.push({ speaker: seg.speaker, text: text || '[no speech]' })
-  }
-  await asr.destroyInstance()
+  // Step 2: transcribe each speaker segment.
+  const asrModel = new TranscriptionParakeet({ files: { model: asrPath } })
+  await asrModel.load()
+  const results = await transcribeSegments(asrModel, audioData, segments)
+  await asrModel.unload()
 
   console.log('\n=== Diarized Transcription ===')
   for (const e of results) console.log(`Speaker ${e.speaker}: ${e.text}`)
 
-  binding.releaseLogger()
+  addonLogging.releaseLogger()
 }
 
 main().catch(err => {
   console.error('Error:', err)
-  binding.releaseLogger()
+  addonLogging.releaseLogger()
   process.exit(1)
 })

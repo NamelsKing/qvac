@@ -4,9 +4,9 @@
  * Universal transcribe / diarize example.
  *
  * Loads a single Parakeet GGUF (CTC, TDT, EOU, or Sortformer) and
- * runs inference on a wav / raw PCM file. The binding auto-detects
- * the model type from the GGUF metadata, so one example covers every
- * checkpoint.
+ * runs inference on a wav / raw PCM file via the public
+ * `TranscriptionParakeet` class. The binding auto-detects the model
+ * type from GGUF metadata, so the same script handles every engine.
  *
  * Usage:
  *   bare examples/transcribe.js --model <gguf> --audio <file>
@@ -15,18 +15,15 @@
 /* global Bare */
 const path = require('bare-path')
 const process = require('bare-process')
-const binding = require('../binding.js')
-const { ParakeetInterface } = require('../parakeet.js')
+const TranscriptionParakeet = require('../index.js')
+const addonLogging = require('../addonLogging.js')
 const {
   setupLogger,
   parseWavFile,
   convertRawToFloat32,
-  loadModelWeights,
+  readFileAsStream,
   validatePaths,
-  createJobTracker,
-  createOutputCallback,
-  printResults,
-  readFileAsStream
+  printResults
 } = require('./utils.js')
 
 function parseArgs () {
@@ -54,46 +51,44 @@ async function main () {
     process.exit(1)
   }
 
-  setupLogger(binding)
+  setupLogger(addonLogging)
   const modelPath = path.resolve(args.model)
   const audioPath = path.resolve(args.audio)
   if (!validatePaths({ model: modelPath, audio: audioPath })) {
-    binding.releaseLogger()
+    addonLogging.releaseLogger()
     process.exit(1)
   }
 
   console.log(`Model: ${modelPath}`)
-  console.log(`Audio: ${audioPath}\n`)
+  console.log(`Audio: ${audioPath}`)
 
-  const tracker = createJobTracker()
-  const parakeet = new ParakeetInterface(
-    binding,
-    { modelPath },
-    createOutputCallback(tracker),
-    () => {})
+  const model = new TranscriptionParakeet({
+    files: { model: modelPath }
+  })
 
-  await loadModelWeights(parakeet, modelPath)
-  await parakeet.activate()
+  await model.load()
 
   const audioData = await loadAudio(audioPath)
-  const durationS = audioData.length / 16000
-  console.log(`Audio: ${durationS.toFixed(2)}s\n`)
+  console.log(`Audio: ${(audioData.length / 16000).toFixed(2)}s\n`)
 
-  await parakeet.append({ type: 'audio', data: audioData.buffer })
-  await parakeet.append({ type: 'end of job' })
+  const segments = []
+  const response = await model.run(audioData)
+  await response
+    .onUpdate(out => {
+      const items = Array.isArray(out) ? out : [out]
+      for (const s of items) {
+        if (s && s.text && s.toAppend) segments.push(s)
+      }
+    })
+    .await()
 
-  const timeoutMs = Math.max(30000, durationS * 2000)
-  const timeout = setTimeout(() => tracker.resolve(), timeoutMs)
-  await tracker.promise
-  clearTimeout(timeout)
-
-  printResults(tracker.transcriptions)
-  await parakeet.destroyInstance()
-  binding.releaseLogger()
+  printResults(segments)
+  await model.unload()
+  addonLogging.releaseLogger()
 }
 
 main().catch(err => {
   console.error('Error:', err)
-  binding.releaseLogger()
+  addonLogging.releaseLogger()
   process.exit(1)
 })

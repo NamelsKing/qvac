@@ -18,13 +18,12 @@ const fs = require('bare-fs')
 const path = require('bare-path')
 const {
   binding,
-  ParakeetInterface,
+  TranscriptionParakeet,
   detectPlatform,
   setupJsLogger,
   getTestPaths,
   validateAccuracy,
   loadGgufOrSkip,
-  getNamedPathsConfig,
   isMobile
 } = require('./helpers.js')
 
@@ -103,67 +102,26 @@ async function runLanguageTest (t, langConfig, loggerBinding, stagedGguf) {
 
   console.log(`   Audio duration: ${(audioData.length / sampleRate).toFixed(2)}s`)
 
-  // Configuration
-  const config = {
-    modelPath: stagedGguf,
-    modelType: 'tdt',
-    maxThreads: 4,
-    useGPU: false,
-    sampleRate: 16000,
-    channels: 1,
-    ...getNamedPathsConfig('tdt', stagedGguf)
-  }
+  const model = new TranscriptionParakeet({
+    files: { model: stagedGguf },
+    config: { parakeetConfig: { maxThreads: 4, useGPU: false } }
+  })
 
-  // Track transcription
   const transcriptions = []
-  let jobDoneResolve = null
-  const jobDonePromise = new Promise(resolve => { jobDoneResolve = resolve })
-
-  function outputCallback (handle, event, id, output, error) {
-    if (event === 'Output' && Array.isArray(output)) {
-      for (const segment of output) {
-        if (segment && segment.text) {
-          transcriptions.push(segment)
-        }
-      }
-    }
-    if (event === 'Error') {
-      console.log(`   Error: ${error}`)
-      if (jobDoneResolve) {
-        jobDoneResolve()
-        jobDoneResolve = null
-      }
-    }
-    if (event === 'JobEnded') {
-      if (jobDoneResolve) {
-        jobDoneResolve()
-        jobDoneResolve = null
-      }
-    }
-  }
-
-  let parakeet = null
 
   try {
-    parakeet = new ParakeetInterface(binding, config, outputCallback)
+    await model.load()
 
-    await parakeet.activate()
+    const response = await model.run(audioData)
+    await response
+      .onUpdate(out => {
+        const items = Array.isArray(out) ? out : [out]
+        for (const seg of items) {
+          if (seg && seg.text) transcriptions.push(seg)
+        }
+      })
+      .await()
 
-    // Transcribe
-    await parakeet.append({ type: 'audio', data: audioData.buffer })
-    await parakeet.append({ type: 'end of job' })
-
-    // Wait for output with timeout (10 min should be enough for truncated audio)
-    const timeout = setTimeout(() => {
-      if (jobDoneResolve) {
-        jobDoneResolve()
-        jobDoneResolve = null
-      }
-    }, 600000)
-    await jobDonePromise
-    clearTimeout(timeout)
-
-    // Get results
     const fullText = transcriptions.map(s => s.text).join(' ').trim()
 
     console.log(`\n📝 ${langConfig.name} transcription (${transcriptions.length} segments):`)
@@ -207,13 +165,7 @@ async function runLanguageTest (t, langConfig, loggerBinding, stagedGguf) {
     console.log(`❌ Test error: ${error.message}`)
     return { skipped: false, passed: false, error: error.message }
   } finally {
-    if (parakeet) {
-      try {
-        await parakeet.destroyInstance()
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-    }
+    try { await model.unload() } catch (e) { /* ignore */ }
   }
 }
 

@@ -156,7 +156,7 @@ The integration suite locates each model type via `QVAC_TEST_GGUF_DIR=<path-with
 
 The library wraps `qvac-parakeet.cpp`'s engine in the QVAC addon framework so you can transcribe audio files, run speaker diarization, or stream live mic input through the same shape: load a single `.gguf`, push audio chunks, drain segment callbacks.
 
-> **Heads up:** the package is intended to be used through `index.js`'s `TranscriptionParakeet` class for typical apps, or through the lower-level `parakeet.js` `ParakeetInterface` when you need direct control of the lifecycle (as the bundled examples do).
+> **Heads up:** the package is intended to be used through `index.js`'s `TranscriptionParakeet` class. A lower-level `ParakeetInterface` (in `parakeet.js`) is also exported as an escape hatch for power users that need to drive the addon's job runner directly, but new code should default to `TranscriptionParakeet` -- it's what the bundled examples and integration tests use.
 
 ### 1. Stage a Model
 

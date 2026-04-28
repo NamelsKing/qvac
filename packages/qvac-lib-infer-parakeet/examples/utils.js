@@ -1,12 +1,12 @@
 'use strict'
 
-// Shared helpers for the (flag-driven) examples. The ggml backend
-// uses a single .gguf per checkpoint, so this file only deals with
-// single-file GGUF loading + audio decode + a small streaming
-// callback adapter.
+// Shared helpers for the (flag-driven) examples. They orchestrate
+// audio decode + native logger filtering + a small pushable async
+// iterable for live-mic streaming. The examples themselves drive
+// transcription through the public `TranscriptionParakeet` class
+// (`require('../index.js')`).
 
 const fs = require('bare-fs')
-const path = require('bare-path')
 
 // Mirror of qvac_lib_inference_addon_cpp::logger::Priority. The
 // native binding queues every priority; we filter at WARNING+ here
@@ -15,30 +15,27 @@ const path = require('bare-path')
 const LOG_PRIORITIES = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
 const NATIVE_MIN_PRIORITY = 1 // WARNING
 
-const JOB_TRACKER_GRACE_MS = 5000
-
 /**
  * Install a JS-side sink for native log messages. Filters at
- * WARNING+ so ggml's metal/opencl/vulkan kernel-JIT INFO lines stay
+ * WARNING+ so ggml's metal/vulkan/opencl kernel-JIT INFO lines stay
  * silent. Edit NATIVE_MIN_PRIORITY at the top of this file to see
- * INFO / DEBUG.
+ * INFO / DEBUG. Pass `require('../addonLogging.js')` (or the raw
+ * binding) -- both expose `setLogger` / `releaseLogger`.
  *
- * @param {Object} binding - the native binding exported from binding.js
+ * @param {Object} loggerBinding
  */
-function setupLogger (binding) {
-  if (binding.__qvacExampleLoggerSet) return
-  binding.setLogger((priority, message) => {
+function setupLogger (loggerBinding) {
+  if (loggerBinding.__qvacExampleLoggerSet) return
+  loggerBinding.setLogger((priority, message) => {
     if (priority > NATIVE_MIN_PRIORITY) return
     const name = LOG_PRIORITIES[priority] || `UNKNOWN(${priority})`
     console.log(`[C++ ${name}] ${message}`)
   })
-  binding.__qvacExampleLoggerSet = true
+  loggerBinding.__qvacExampleLoggerSet = true
 }
 
 /**
  * Read a file using streams to handle large GGUFs (>2 GiB).
- * @param {string} filePath
- * @returns {Promise<Buffer>}
  */
 function readFileAsStream (filePath) {
   return new Promise((resolve, reject) => {
@@ -53,9 +50,6 @@ function readFileAsStream (filePath) {
 /**
  * Parse a WAV file (RIFF/PCM int16 mono) into a Float32Array of
  * normalised samples. Skips non-`data` chunks.
- *
- * @param {string} wavPath
- * @returns {Float32Array}
  */
 function parseWavFile (wavPath) {
   const buffer = fs.readFileSync(wavPath)
@@ -82,9 +76,6 @@ function parseWavFile (wavPath) {
 /**
  * Convert a raw int16 little-endian PCM buffer to a normalised
  * Float32Array. Used for `.raw` audio fixtures.
- *
- * @param {Buffer} rawBuffer
- * @returns {Float32Array}
  */
 function convertRawToFloat32 (rawBuffer) {
   const view = new Int16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2)
@@ -94,35 +85,12 @@ function convertRawToFloat32 (rawBuffer) {
 }
 
 /**
- * Stream a single GGUF file into the addon via the
- * `loadWeights({filename, chunk, completed})` API.
- *
- * @param {Object} parakeet - ParakeetInterface instance
- * @param {string} ggufPath - absolute path to the .gguf file
- */
-async function loadModelWeights (parakeet, ggufPath) {
-  if (!ggufPath.toLowerCase().endsWith('.gguf')) {
-    throw new Error(`loadModelWeights: expected a .gguf path, got "${ggufPath}"`)
-  }
-  if (!fs.existsSync(ggufPath)) {
-    throw new Error(`GGUF model not found: ${ggufPath}`)
-  }
-  const filename = path.basename(ggufPath)
-  const buffer = await readFileAsStream(ggufPath)
-  const chunk = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-  await parakeet.loadWeights({ filename, chunk, completed: true })
-  console.log(`   Loaded: ${filename} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`)
-}
-
-/**
  * Validate that required paths exist on disk.
- * @param {Object} paths - { model: string, audio?: string }
- * @returns {boolean}
  */
 function validatePaths (paths) {
   if (!fs.existsSync(paths.model)) {
     console.error(`Model not found: ${paths.model}`)
-    console.error("Run 'npm run download-models' or pass --model </path/to/model.gguf>.")
+    console.error("Run 'npm run setup-models' or pass --model </path/to/model.gguf>.")
     return false
   }
   if (paths.audio && !fs.existsSync(paths.audio)) {
@@ -133,81 +101,60 @@ function validatePaths (paths) {
 }
 
 /**
- * Create a promise that resolves when the addon emits both an Output
- * event and a JobEnded event (whichever order). Solves the race where
- * fast models can fire JobEnded before the Output payload lands.
- *
- * @returns {{ promise, resolve, transcriptions, markOutput, markJobEnded }}
+ * Pushable async-iterable: consumers `await for (const chunk of
+ * stream)` while producers `stream.push(chunk)` and `stream.end()`
+ * close it. Used by the live-mic examples to feed chunks captured
+ * from `sox` into `TranscriptionParakeet.run()` without buffering
+ * the entire stream.
  */
-function createJobTracker () {
-  const transcriptions = []
-  let resolveJob = null
-  let hasOutput = false
-  let jobEnded = false
-  let graceTimeout = null
-  const promise = new Promise(resolve => { resolveJob = resolve })
+function pushableStream () {
+  const queue = []
+  let waiter = null
+  let ended = false
 
-  const tryResolve = () => {
-    if (hasOutput && jobEnded) {
-      if (graceTimeout) clearTimeout(graceTimeout)
-      resolveJob()
+  function push (chunk) {
+    if (ended) return
+    queue.push(chunk)
+    if (waiter) {
+      const w = waiter
+      waiter = null
+      w()
+    }
+  }
+
+  function end () {
+    ended = true
+    if (waiter) {
+      const w = waiter
+      waiter = null
+      w()
     }
   }
 
   return {
-    promise,
-    resolve: () => resolveJob(),
-    transcriptions,
-    markOutput () { hasOutput = true; tryResolve() },
-    markJobEnded () {
-      jobEnded = true
-      tryResolve()
-      if (!hasOutput) {
-        graceTimeout = setTimeout(() => resolveJob(), JOB_TRACKER_GRACE_MS)
-      }
-    }
-  }
-}
-
-/**
- * Create a standard output callback that pushes per-segment transcripts
- * into a tracker, optionally streaming them to stdout.
- *
- * @param {Object} tracker - from createJobTracker()
- * @param {Object} [options] - { verbose: boolean }
- */
-function createOutputCallback (tracker, { verbose = false } = {}) {
-  return (handle, event, id, output, error) => {
-    if (error) {
-      console.error('Error:', error)
-      return
-    }
-    if (event === 'Output' && output) {
-      const segments = Array.isArray(output) ? output : [output]
-      for (const seg of segments) {
-        if (!seg || !seg.text || !seg.toAppend) continue
-        tracker.transcriptions.push(seg)
-        if (verbose) {
-          const a = seg.start?.toFixed(2) ?? '?'
-          const b = seg.end?.toFixed(2) ?? '?'
-          console.log(`   [${a}s - ${b}s] ${seg.text}`)
+    push,
+    end,
+    async * [Symbol.asyncIterator] () {
+      while (true) {
+        if (queue.length > 0) {
+          yield queue.shift()
+          continue
         }
+        if (ended) return
+        await new Promise(resolve => { waiter = resolve })
       }
-      tracker.markOutput()
     }
-    if (event === 'JobEnded') tracker.markJobEnded()
   }
 }
 
 /**
- * Print transcription results to stdout in a uniform "=== RESULT ==="
- * banner block.
+ * Print transcription segments to stdout in a uniform banner block.
  */
-function printResults (transcriptions) {
+function printResults (segments) {
   console.log('\n=== RESULT ===')
   console.log('='.repeat(50))
-  if (transcriptions.length > 0) {
-    const text = transcriptions.map(s => s.text).join(' ').trim().replace(/\s+/g, ' ')
+  if (segments.length > 0) {
+    const text = segments.map(s => s.text).join(' ').trim().replace(/\s+/g, ' ')
     console.log(text)
   } else {
     console.log('[No speech detected]')
@@ -220,9 +167,7 @@ module.exports = {
   readFileAsStream,
   parseWavFile,
   convertRawToFloat32,
-  loadModelWeights,
   validatePaths,
-  createJobTracker,
-  createOutputCallback,
+  pushableStream,
   printResults
 }
