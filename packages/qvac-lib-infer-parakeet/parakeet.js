@@ -1,41 +1,10 @@
 'use strict'
 
-// Try to load QVAC error module, fallback to simple Error class
-let QvacErrorAddonParakeet, ERR_CODES, END_OF_INPUT
-try {
-  const errorModule = require('./lib/error')
-  QvacErrorAddonParakeet = errorModule.QvacErrorAddonParakeet
-  ERR_CODES = errorModule.ERR_CODES
-  END_OF_INPUT = errorModule.END_OF_INPUT
-} catch (e) {
-  class SimpleParakeetError extends Error {
-    constructor (code, message) {
-      super(message)
-      this.code = code
-      this.name = 'QvacErrorAddonParakeet'
-    }
-  }
-  QvacErrorAddonParakeet = SimpleParakeetError
-  ERR_CODES = {
-    FAILED_TO_LOAD_WEIGHTS: 7001,
-    FAILED_TO_CANCEL: 7002,
-    FAILED_TO_APPEND: 7003,
-    FAILED_TO_GET_STATUS: 7004,
-    FAILED_TO_DESTROY: 7005,
-    FAILED_TO_ACTIVATE: 7006,
-    FAILED_TO_RESET: 7007,
-    FAILED_TO_PAUSE: 7008,
-    MODEL_NOT_FOUND: 7009,
-    INVALID_AUDIO_FORMAT: 7010,
-    PREPROCESSOR_NOT_FOUND: 7011,
-    VOCAB_NOT_FOUND: 7012,
-    ENCODER_NOT_FOUND: 7013,
-    DECODER_NOT_FOUND: 7014,
-    INVALID_CONFIG: 7015,
-    BUFFER_LIMIT_EXCEEDED: 7016
-  }
-  END_OF_INPUT = 'end of job'
-}
+const {
+  QvacErrorAddonParakeet,
+  ERR_CODES,
+  END_OF_INPUT
+} = require('./lib/error')
 
 const state = Object.freeze({
   LOADING: 'loading',
@@ -54,32 +23,36 @@ function nextSafeId (current) {
 const MAX_BUFFERED_BYTES = 500 * 1024 * 1024
 
 function createParakeetError (code, message, cause = undefined) {
-  // @qvac/error expects an options object, while the local fallback class
-  // accepts positional args. Support both call shapes.
-  try {
-    return new QvacErrorAddonParakeet({ code, adds: message, cause })
-  } catch {
-    return new QvacErrorAddonParakeet(code, message)
-  }
+  return new QvacErrorAddonParakeet({ code, adds: message, cause })
 }
 
 /**
- * An interface between Bare addon in C++ and JS runtime.
- * Provides low-level access to the Parakeet speech-to-text model.
+ * Low-level interface between the Bare addon (C++) and the JS
+ * runtime. Wraps the ggml-backed Parakeet engine sourced from
+ * qvac-parakeet.cpp. The model type is auto-detected from the
+ * loaded GGUF's metadata, so there's no `modelType` field on the
+ * config -- pass any of CTC / TDT / EOU / Sortformer .gguf files
+ * to `loadWeights()` and the right pipeline is chosen automatically.
  */
 class ParakeetInterface {
   /**
    * @param {Object} binding - the native binding object
-   * @param {Object} configurationParams - all the required configuration for inference setup
-   * @param {string} configurationParams.modelPath - path to the model directory
-   * @param {string} configurationParams.modelType - model type: 'tdt', 'ctc', 'eou', or 'sortformer'
-   * @param {number} [configurationParams.maxThreads=4] - max CPU threads for inference
-   * @param {boolean} [configurationParams.useGPU=false] - enable GPU acceleration
+   * @param {Object} configurationParams - inference setup
+   * @param {string} [configurationParams.modelPath] - path to a `.gguf`
+   *   file (alternative to streaming bytes via `loadWeights()`).
+   * @param {number} [configurationParams.maxThreads=4] - max CPU threads (0 = engine picks)
+   * @param {boolean} [configurationParams.useGPU=false] - enable the linked ggml GPU backend
    * @param {number} [configurationParams.sampleRate=16000] - audio sample rate
    * @param {number} [configurationParams.channels=1] - audio channels (must be 1 for mono)
    * @param {boolean} [configurationParams.captionEnabled=false] - enable caption/subtitle mode
    * @param {boolean} [configurationParams.timestampsEnabled=true] - include timestamps in output
    * @param {number} [configurationParams.seed=-1] - random seed (-1 for random)
+   * @param {boolean} [configurationParams.streaming=false] - open a long-lived
+   *   StreamSession / SortformerStreamSession at load() time
+   * @param {number} [configurationParams.streamingChunkMs=2000]
+   * @param {number} [configurationParams.streamingHistoryMs=30000] - Sortformer rolling history
+   * @param {boolean} [configurationParams.streamingEmitPartials=true]
+   * @param {boolean} [configurationParams.streamingEnergyVad=false] - CTC/TDT energy-VAD events
    * @param {Function} outputCallback - callback for transcription output events
    * @param {Function} [stateCallback] - callback for state transitions
    */

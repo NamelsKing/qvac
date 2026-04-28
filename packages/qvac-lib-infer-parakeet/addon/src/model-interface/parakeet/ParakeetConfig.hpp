@@ -7,26 +7,24 @@
 namespace qvac_lib_infer_parakeet {
 
 struct ParakeetConfig {
+  // Path to a single `.gguf` produced by qvac-parakeet.cpp's
+  // converter. Either this or a streamed setWeightsForFile() byte
+  // sequence must be present at load() time.
   std::string modelPath;
-  std::string encoderPath;
-  std::string encoderDataPath;
-  std::string decoderPath;
-  std::string vocabPath;
-  std::string preprocessorPath;
-  std::string ctcModelPath;
-  std::string ctcModelDataPath;
-  std::string tokenizerPath;
-  std::string eouEncoderPath;
-  std::string eouDecoderPath;
-  std::string sortformerPath;
+
+  // ModelType is auto-detected by ParakeetModel::load() from the
+  // engine's `parakeet.model.type` GGUF metadata; the default below
+  // is just a placeholder until that override fires. Callers no
+  // longer need to set this.
   ModelType modelType = ModelType::TDT;
-  int maxThreads = 4;
-  bool useGPU = false;
-  int sampleRate = 16000;
-  int channels = 1;
-  bool captionEnabled = false;
+
+  int  maxThreads        = 4;
+  bool useGPU            = false;
+  int  sampleRate        = 16000;
+  int  channels          = 1;
+  bool captionEnabled    = false;
   bool timestampsEnabled = true;
-  int seed = -1;
+  int  seed              = -1;
 
   // ── Streaming mode ──────────────────────────────────────────────────────
   // When true, the model opens a long-lived qvac_parakeet streaming session
@@ -48,20 +46,10 @@ struct ParakeetConfig {
   bool streamingEnergyVad    = false;   // CTC/TDT only; ignored elsewhere
 
   ParakeetConfig() = default;
-
   explicit ParakeetConfig(const std::string& path) : modelPath(path) {}
 
   bool operator==(const ParakeetConfig& other) const {
-    return modelPath == other.modelPath && encoderPath == other.encoderPath &&
-           encoderDataPath == other.encoderDataPath &&
-           decoderPath == other.decoderPath && vocabPath == other.vocabPath &&
-           preprocessorPath == other.preprocessorPath &&
-           ctcModelPath == other.ctcModelPath &&
-           ctcModelDataPath == other.ctcModelDataPath &&
-           tokenizerPath == other.tokenizerPath &&
-           eouEncoderPath == other.eouEncoderPath &&
-           eouDecoderPath == other.eouDecoderPath &&
-           sortformerPath == other.sortformerPath &&
+    return modelPath == other.modelPath &&
            modelType == other.modelType && maxThreads == other.maxThreads &&
            useGPU == other.useGPU && sampleRate == other.sampleRate &&
            channels == other.channels &&
@@ -74,9 +62,7 @@ struct ParakeetConfig {
            streamingEnergyVad == other.streamingEnergyVad;
   }
 
-  bool operator!=(const ParakeetConfig& other) const {
-    return !(*this == other);
-  }
+  bool operator!=(const ParakeetConfig& other) const { return !(*this == other); }
 };
 
 } // namespace qvac_lib_infer_parakeet

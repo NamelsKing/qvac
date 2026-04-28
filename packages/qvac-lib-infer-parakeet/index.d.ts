@@ -4,21 +4,22 @@ import type { QvacResponse } from '@qvac/infer-base';
 import type { LoggerInterface } from '@qvac/logging';
 
 /**
- * Model type options for Parakeet
+ * Model type discriminator. The binding auto-detects this from the
+ * loaded GGUF's `parakeet.model.type` metadata field; this type is
+ * only here for callers that want to surface it in their own UI.
  */
 export type ModelType = 'tdt' | 'ctc' | 'eou' | 'sortformer';
 
 /**
- * Parakeet-specific configuration options
+ * Parakeet-specific configuration options. The model type itself is
+ * not configured here -- it's auto-detected from the GGUF metadata.
  */
 export interface ParakeetConfig {
-  /** Model type: 'tdt' (multilingual), 'ctc' (English), 'eou' (streaming), 'sortformer' (diarization) */
-  modelType?: ModelType;
-  /** Maximum CPU threads for inference */
+  /** Maximum CPU threads for inference (0 lets the engine pick) */
   maxThreads?: number;
-  /** Enable GPU acceleration (CUDA/CoreML/DirectML) */
+  /** Enable the linked ggml GPU backend (Metal / Vulkan / CUDA) */
   useGPU?: boolean;
-  /** Audio sample rate in Hz (default: 16000) */
+  /** Audio sample rate in Hz (default: 16000; engine assumes 16 kHz) */
   sampleRate?: number;
   /** Number of audio channels (default: 1, must be mono) */
   channels?: number;
@@ -28,34 +29,37 @@ export interface ParakeetConfig {
   timestampsEnabled?: boolean;
   /** Random seed for reproducibility (-1 for random, default: -1) */
   seed?: number;
+
+  /**
+   * Open a long-lived streaming session (StreamSession for ASR,
+   * SortformerStreamSession for diarization) at load() time and
+   * route each `process()` call through `feed_pcm_f32()`. Speaker
+   * IDs stay stable across appends, EOU `<EOU>` boundaries surface
+   * as segment markers, and CTC/TDT can opt into energy-VAD events.
+   * Default: false (offline `transcribe_samples` / `diarize_samples`).
+   */
+  streaming?: boolean;
+  /** Streaming chunk cadence in milliseconds (default: 2000) */
+  streamingChunkMs?: number;
+  /** Sortformer rolling-history window in ms (default: 30000) */
+  streamingHistoryMs?: number;
+  /** Emit partial segments before chunk boundaries (default: true) */
+  streamingEmitPartials?: boolean;
+  /** CTC/TDT-only energy-VAD events (default: false) */
+  streamingEnergyVad?: boolean;
 }
 
 /**
- * Map of model file paths supplied to TranscriptionParakeet
+ * Map of model file paths supplied to TranscriptionParakeet.
  */
 export interface TranscriptionParakeetFiles {
-  /** Absolute path to TDT encoder-model.onnx */
-  encoder?: string;
-  /** Absolute path to TDT encoder-model.onnx.data */
-  encoderData?: string;
-  /** Absolute path to TDT decoder_joint-model.onnx */
-  decoder?: string;
-  /** Absolute path to TDT vocab.txt */
-  vocab?: string;
-  /** Absolute path to TDT preprocessor.onnx */
-  preprocessor?: string;
-  /** Absolute path to CTC model.onnx */
+  /**
+   * Absolute path to a single `.gguf` checkpoint produced by
+   * `qvac-parakeet.cpp/scripts/convert-nemo-to-gguf.py`. The same
+   * field accepts CTC, TDT, EOU, and Sortformer GGUFs -- the binding
+   * picks the right dispatch from the file's metadata.
+   */
   model?: string;
-  /** Absolute path to CTC model.onnx_data */
-  modelData?: string;
-  /** Absolute path to CTC/EOU tokenizer.json */
-  tokenizer?: string;
-  /** Absolute path to EOU encoder.onnx */
-  eouEncoder?: string;
-  /** Absolute path to EOU decoder_joint.onnx */
-  eouDecoder?: string;
-  /** Absolute path to sortformer.onnx */
-  sortformer?: string;
 }
 
 /**
@@ -132,8 +136,10 @@ export interface Addon {
 }
 
 /**
- * ONNX Runtime client implementation for the Parakeet speech-to-text model.
- * Supports NVIDIA Parakeet ASR models in ONNX format.
+ * High-level Parakeet speech-to-text client backed by the ggml engine
+ * sourced from qvac-parakeet.cpp. Accepts a single `.gguf` checkpoint
+ * (CTC / TDT / EOU / Sortformer) -- the binding auto-detects the
+ * model type from GGUF metadata.
  */
 declare class TranscriptionParakeet {
   protected readonly _config: TranscriptionParakeetConfig;
@@ -147,7 +153,9 @@ declare class TranscriptionParakeet {
   constructor(opts: TranscriptionParakeetArgs);
 
   /**
-   * Validate that required model files exist
+   * Validate that the configured GGUF exists (logs a warning on
+   * miss; does not throw, so callers can pre-stage the file
+   * asynchronously between construction and `load()`).
    */
   validateModelFiles(): void;
 
@@ -260,4 +268,3 @@ declare namespace TranscriptionParakeet {
 }
 
 export = TranscriptionParakeet;
-

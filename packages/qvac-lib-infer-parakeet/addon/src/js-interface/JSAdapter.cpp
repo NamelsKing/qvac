@@ -22,20 +22,11 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
     config.modelPath = pathOpt.value().as<std::string>(env);
   }
 
-  auto modelTypeOpt =
-      jsObject.getOptionalProperty<js::String>(env, "modelType");
-  if (modelTypeOpt.has_value()) {
-    std::string typeStr = modelTypeOpt.value().as<std::string>(env);
-    if (typeStr == "ctc") {
-      config.modelType = ModelType::CTC;
-    } else if (typeStr == "tdt") {
-      config.modelType = ModelType::TDT;
-    } else if (typeStr == "eou") {
-      config.modelType = ModelType::EOU;
-    } else if (typeStr == "sortformer") {
-      config.modelType = ModelType::SORTFORMER;
-    }
-  }
+  // modelType is intentionally not read from JS: ParakeetModel::load()
+  // overrides cfg_.modelType from `engine_->model_type()` after the
+  // GGUF is loaded, so any JS hint would be ignored anyway. The
+  // ParakeetConfig default (TDT) is fine as a placeholder until that
+  // override fires.
 
   auto threadsOpt = jsObject.getOptionalProperty<js::Number>(env, "maxThreads");
   if (threadsOpt.has_value()) {
@@ -105,62 +96,6 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
       jsObject.getOptionalProperty<js::Boolean>(env, "streamingEnergyVad");
   if (streamingEnergyVadOpt.has_value()) {
     config.streamingEnergyVad = streamingEnergyVadOpt.value().as<bool>(env);
-  }
-
-  auto encoderPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "encoderPath");
-  if (encoderPathOpt.has_value()) {
-    config.encoderPath = encoderPathOpt.value().as<std::string>(env);
-  }
-  auto encoderDataPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "encoderDataPath");
-  if (encoderDataPathOpt.has_value()) {
-    config.encoderDataPath = encoderDataPathOpt.value().as<std::string>(env);
-  }
-  auto decoderPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "decoderPath");
-  if (decoderPathOpt.has_value()) {
-    config.decoderPath = decoderPathOpt.value().as<std::string>(env);
-  }
-  auto vocabPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "vocabPath");
-  if (vocabPathOpt.has_value()) {
-    config.vocabPath = vocabPathOpt.value().as<std::string>(env);
-  }
-  auto preprocessorPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "preprocessorPath");
-  if (preprocessorPathOpt.has_value()) {
-    config.preprocessorPath = preprocessorPathOpt.value().as<std::string>(env);
-  }
-  auto ctcModelPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "ctcModelPath");
-  if (ctcModelPathOpt.has_value()) {
-    config.ctcModelPath = ctcModelPathOpt.value().as<std::string>(env);
-  }
-  auto ctcModelDataPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "ctcModelDataPath");
-  if (ctcModelDataPathOpt.has_value()) {
-    config.ctcModelDataPath = ctcModelDataPathOpt.value().as<std::string>(env);
-  }
-  auto tokenizerPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "tokenizerPath");
-  if (tokenizerPathOpt.has_value()) {
-    config.tokenizerPath = tokenizerPathOpt.value().as<std::string>(env);
-  }
-  auto eouEncoderPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "eouEncoderPath");
-  if (eouEncoderPathOpt.has_value()) {
-    config.eouEncoderPath = eouEncoderPathOpt.value().as<std::string>(env);
-  }
-  auto eouDecoderPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "eouDecoderPath");
-  if (eouDecoderPathOpt.has_value()) {
-    config.eouDecoderPath = eouDecoderPathOpt.value().as<std::string>(env);
-  }
-  auto sortformerPathOpt =
-      jsObject.getOptionalProperty<js::String>(env, "sortformerPath");
-  if (sortformerPathOpt.has_value()) {
-    config.sortformerPath = sortformerPathOpt.value().as<std::string>(env);
   }
 
   auto innerConfigOpt = jsObject.getOptionalProperty<js::Object>(env, "config");

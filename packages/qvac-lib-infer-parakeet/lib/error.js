@@ -6,7 +6,10 @@ class QvacErrorAddonParakeet extends QvacErrorBase { }
 
 const { name, version } = require('../package.json')
 
-// This library has error code range from 24,001 to 25,000
+// This library has error code range from 24,001 to 25,000.
+// IDs are stable -- existing slots stay at their numeric value even
+// when neighbouring entries are removed, so consumers comparing by
+// integer code don't break.
 const ERR_CODES = Object.freeze({
   FAILED_TO_LOAD_WEIGHTS: 24001,
   FAILED_TO_CANCEL: 24002,
@@ -18,10 +21,10 @@ const ERR_CODES = Object.freeze({
   FAILED_TO_PAUSE: 24008,
   MODEL_NOT_FOUND: 24009,
   INVALID_AUDIO_FORMAT: 24010,
-  PREPROCESSOR_NOT_FOUND: 24011,
-  VOCAB_NOT_FOUND: 24012,
-  ENCODER_NOT_FOUND: 24013,
-  DECODER_NOT_FOUND: 24014,
+  // 24011-24014 retired (PREPROCESSOR_NOT_FOUND / VOCAB_NOT_FOUND /
+  // ENCODER_NOT_FOUND / DECODER_NOT_FOUND were specific to the
+  // legacy multi-file ONNX layout; the GGUF backend uses a single
+  // `.gguf` and surfaces missing-file errors as MODEL_NOT_FOUND).
   INVALID_CONFIG: 24015,
   JOB_ALREADY_RUNNING: 24016,
   BUFFER_LIMIT_EXCEEDED: 24017,
@@ -69,22 +72,6 @@ addCodes({
   [ERR_CODES.INVALID_AUDIO_FORMAT]: {
     name: 'INVALID_AUDIO_FORMAT',
     message: (format) => `Invalid audio format: ${format}. Expected 16kHz mono audio.`
-  },
-  [ERR_CODES.PREPROCESSOR_NOT_FOUND]: {
-    name: 'PREPROCESSOR_NOT_FOUND',
-    message: () => 'Preprocessor model (preprocessor.onnx) not found. Required for accurate transcription.'
-  },
-  [ERR_CODES.VOCAB_NOT_FOUND]: {
-    name: 'VOCAB_NOT_FOUND',
-    message: () => 'Vocabulary file (vocab.txt) not found.'
-  },
-  [ERR_CODES.ENCODER_NOT_FOUND]: {
-    name: 'ENCODER_NOT_FOUND',
-    message: () => 'Encoder model (encoder-model.onnx) not found.'
-  },
-  [ERR_CODES.DECODER_NOT_FOUND]: {
-    name: 'DECODER_NOT_FOUND',
-    message: () => 'Decoder model (decoder_joint-model.onnx) not found.'
   },
   [ERR_CODES.INVALID_CONFIG]: {
     name: 'INVALID_CONFIG',
