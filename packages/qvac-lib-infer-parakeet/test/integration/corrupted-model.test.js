@@ -121,9 +121,9 @@ test('Truncated GGUF (correct magic, no data) should emit Error event to JavaScr
     // 4-byte GGUF magic followed by truncated metadata. Just enough to
     // get past the initial file-existence check but fail at parse.
     const truncated = Buffer.from([
-      0x47, 0x47, 0x55, 0x46,           // "GGUF" magic
-      0x03, 0x00, 0x00, 0x00,           // version=3 (little-endian uint32)
-      0xFF, 0xFF, 0xFF, 0xFF,           // garbage tensor count
+      0x47, 0x47, 0x55, 0x46, // "GGUF" magic
+      0x03, 0x00, 0x00, 0x00, // version=3 (little-endian uint32)
+      0xFF, 0xFF, 0xFF, 0xFF, // garbage tensor count
       0xFF, 0xFF, 0xFF, 0xFF
     ])
     const gguf = writeBadGguf(dir, truncated)

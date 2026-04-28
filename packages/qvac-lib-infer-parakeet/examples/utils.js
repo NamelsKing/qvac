@@ -12,7 +12,7 @@ const path = require('bare-path')
 // native binding queues every priority; we filter at WARNING+ here
 // so kernel-JIT INFO spam from ggml's GPU backends never reaches the
 // console. To see INFO/DEBUG, lower NATIVE_MIN_PRIORITY below.
-const LOG_PRIORITIES   = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
+const LOG_PRIORITIES = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
 const NATIVE_MIN_PRIORITY = 1 // WARNING
 
 const JOB_TRACKER_GRACE_MS = 5000

@@ -147,7 +147,7 @@ async function main () {
           .then(() => parakeet.append({ type: 'end of job' }))
           .then(() => Promise.race([
             tracker.promise,
-            new Promise(r => setTimeout(r, 30000))
+            new Promise(resolve => setTimeout(resolve, 30000))
           ]))
           .then(() => {
             const text = tracker.transcriptions
@@ -190,7 +190,7 @@ async function main () {
     process.exit(0)
   }
 
-  process.once('SIGINT',  shutdown)
+  process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
   child.on('exit', () => shutdown())
 }

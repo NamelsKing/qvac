@@ -267,8 +267,3 @@ C++ Dependencies
   libc++ (LLVM C++ Standard Library)
     https://github.com/llvm/llvm-project
 
---- mit (MIT License) ---
-
-  nlohmann-json
-    https://github.com/nlohmann/json
-

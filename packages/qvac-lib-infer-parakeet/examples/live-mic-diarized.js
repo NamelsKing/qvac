@@ -83,7 +83,7 @@ function parseArgs () {
   const argv = Bare.argv.slice(2)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--asr-model'  || a === '-m') args.asrModel  = argv[++i]
+    if (a === '--asr-model' || a === '-m') args.asrModel = argv[++i]
     else if (a === '--diar-model' || a === '-d') args.diarModel = argv[++i]
     else if (a === '--accumulate') args.accumulate = true
   }
@@ -118,31 +118,31 @@ async function main () {
   setupLogger(binding)
   const stopping = { value: false }
 
-  const asrPath  = path.resolve(args.asrModel)
+  const asrPath = path.resolve(args.asrModel)
   const diarPath = path.resolve(args.diarModel)
-  if (!validatePaths({ model: asrPath }))  { binding.releaseLogger(); process.exit(1) }
+  if (!validatePaths({ model: asrPath })) { binding.releaseLogger(); process.exit(1) }
   if (!validatePaths({ model: diarPath })) { binding.releaseLogger(); process.exit(1) }
 
   console.log(`Loading ${asrPath}...`)
   console.log(`Loading ${diarPath}...`)
 
-  const asrTracker  = { current: createJobTracker() }
+  const asrTracker = { current: createJobTracker() }
   const diarTracker = { current: createJobTracker() }
 
   const asr = new ParakeetInterface(binding, {
-    modelPath:        asrPath,
-    streaming:        true,
+    modelPath: asrPath,
+    streaming: true,
     streamingChunkMs: CHUNK_MS
   }, makeBindingCallback(asrTracker, stopping), () => {})
 
   const diar = new ParakeetInterface(binding, {
-    modelPath:          diarPath,
-    streaming:          true,
-    streamingChunkMs:   CHUNK_MS,
+    modelPath: diarPath,
+    streaming: true,
+    streamingChunkMs: CHUNK_MS,
     streamingHistoryMs: HISTORY_MS
   }, makeBindingCallback(diarTracker, stopping), () => {})
 
-  await loadModelWeights(asr,  asrPath)
+  await loadModelWeights(asr, asrPath)
   await loadModelWeights(diar, diarPath)
   await asr.activate()
   await diar.activate()
@@ -200,7 +200,7 @@ async function main () {
   function emit (chunk) {
     processing = processing
       .then(async () => {
-        asrTracker.current  = createJobTracker()
+        asrTracker.current = createJobTracker()
         diarTracker.current = createJobTracker()
         const at = asrTracker.current
         const dt = diarTracker.current
@@ -208,13 +208,13 @@ async function main () {
         const asrPromise = (async () => {
           await asr.append({ type: 'audio', data: chunk.buffer })
           await asr.append({ type: 'end of job' })
-          await Promise.race([at.promise, new Promise(r => setTimeout(r, 30000))])
+          await Promise.race([at.promise, new Promise(resolve => setTimeout(resolve, 30000))])
         })()
 
         const diarPromise = (async () => {
           await diar.append({ type: 'audio', data: chunk.buffer })
           await diar.append({ type: 'end of job' })
-          await Promise.race([dt.promise, new Promise(r => setTimeout(r, 30000))])
+          await Promise.race([dt.promise, new Promise(resolve => setTimeout(resolve, 30000))])
         })()
 
         await Promise.all([asrPromise, diarPromise])
@@ -268,7 +268,7 @@ async function main () {
     process.exit(0)
   }
 
-  process.once('SIGINT',  shutdown)
+  process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
   child.on('exit', () => shutdown())
 }

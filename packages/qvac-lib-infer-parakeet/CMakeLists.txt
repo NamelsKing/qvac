@@ -32,8 +32,6 @@ find_path(
 find_package(qvac-parakeet-cpp CONFIG REQUIRED)
 find_package(ggml CONFIG REQUIRED)
 
-find_package(nlohmann_json CONFIG REQUIRED)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -93,7 +91,6 @@ target_compile_definitions(${qvac_lib_infer_parakeet} PUBLIC JS_LOGGER)
 target_link_libraries(${LIB_NAME} PRIVATE
     qvac-parakeet::qvac-parakeet
     ggml::ggml
-    nlohmann_json::nlohmann_json
 )
 
 target_link_libraries(
@@ -116,26 +113,6 @@ endif()
 if(ANDROID)
   find_package(Vulkan REQUIRED)
   target_link_libraries(${qvac_lib_infer_parakeet} PRIVATE ${Vulkan_LIBRARY})
-
-  find_program(LLVM_STRIP llvm-strip)
-
-  if(NOT LLVM_STRIP)
-    message(WARNING "-- llvm-strip not found. Skipping library stripping for Android build.")
-  else()
-    message("-- llvm-strip found: ${LLVM_STRIP}")
-    set(LIBRARIES_TO_STRIP libprotobuf.a libprotoc.a libflatbuffers.a libprotobuf-lite.a libre2.a)
-
-    set(VCPKG_INSTALLED_DIR "${CMAKE_BINARY_DIR}/_vcpkg/${VCPKG_TARGET_TRIPLET}")
-    set(LIBS_DIR_PATH "${VCPKG_INSTALLED_DIR}/lib")
-
-    foreach(LIB ${LIBRARIES_TO_STRIP})
-      set(LIB_PATH "${LIBS_DIR_PATH}/${LIB}")
-      if(EXISTS "${LIB_PATH}")
-        execute_process(COMMAND ${LLVM_STRIP} --strip-debug "${LIB_PATH}")
-        message("-- Stripped: ${LIB}")
-      endif()
-    endforeach()
-  endif()
 endif()
 
 if(APPLE)
@@ -218,7 +195,6 @@ if(BUILD_TESTING)
         GTest::gmock_main
         qvac-parakeet::qvac-parakeet
         ggml::ggml
-        nlohmann_json::nlohmann_json
     )
 
     if(ENABLE_COVERAGE)

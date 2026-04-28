@@ -23,7 +23,6 @@ const {
   setupJsLogger,
   getTestPaths,
   loadGgufOrSkip,
-  ensureModel,
   getNamedPathsConfig,
   isMobile
 } = require('./helpers.js')

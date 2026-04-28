@@ -26,7 +26,7 @@
     "coverage:cpp": "npm run coverage:cpp:build && npm run test:cpp:run && npm run coverage:cpp:report",
     "test:mobile:generate": "node scripts/generate-mobile-integration-tests.js",
     "test:mobile:validate": "node scripts/validate-mobile-tests.js",
-    "test:dts": "tsc index.d.ts --noEmit",
+    "test:dts": "tsc index.d.ts addonLogging.d.ts --noEmit --lib es2018 --esModuleInterop --skipLibCheck",
     "download-models": "./scripts/download-models.sh",
     "convert-models": "./scripts/convert-nemo.sh",
     "setup-models": "./scripts/download-models.sh && ./scripts/convert-nemo.sh",
@@ -95,7 +95,8 @@
     "bare-path": "^3.0.0",
     "bare-subprocess": "^5.2.3",
     "path": "npm:bare-path",
-    "process": "npm:bare-process@^4.2.2"
+    "process": "npm:bare-process@^4.2.2",
+    "typescript": "^6.0.3"
   },
   "exports": {
     "./package": "./package.json",

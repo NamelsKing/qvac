@@ -34,9 +34,9 @@ function parseArgs () {
   const argv = Bare.argv.slice(2)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--asr-model'  || a === '-m') args.asrModel  = argv[++i]
+    if (a === '--asr-model' || a === '-m') args.asrModel = argv[++i]
     else if (a === '--diar-model' || a === '-d') args.diarModel = argv[++i]
-    else if (a === '--audio'      || a === '-a') args.audio     = argv[++i]
+    else if (a === '--audio' || a === '-a') args.audio = argv[++i]
   }
   return args
 }
@@ -54,8 +54,8 @@ function parseSpeakerSegments (sortformerText) {
     }
     segments.push({
       speaker: parseInt(m[1], 10),
-      start:   toSec(m[2]),
-      end:     toSec(m[3])
+      start: toSec(m[2]),
+      end: toSec(m[3])
     })
   }
   segments.sort((a, b) => a.start - b.start)
@@ -84,7 +84,7 @@ async function main () {
   }
 
   setupLogger(binding)
-  const asrModel  = path.resolve(args.asrModel)
+  const asrModel = path.resolve(args.asrModel)
   const diarModel = path.resolve(args.diarModel)
   const audioPath = path.resolve(args.audio)
   if (!validatePaths({ model: asrModel, audio: audioPath })) {
@@ -119,7 +119,7 @@ async function main () {
   await sf.append({ type: 'end of job' })
 
   const sfTimeout = setTimeout(() => sfTracker.resolve(),
-                               Math.max(30000, audioData.length / SAMPLE_RATE * 2000))
+    Math.max(30000, audioData.length / SAMPLE_RATE * 2000))
   await sfTracker.promise
   clearTimeout(sfTimeout)
 
@@ -159,7 +159,7 @@ async function main () {
     await asr.append({ type: 'audio', data: slice.buffer })
     await asr.append({ type: 'end of job' })
     const t = setTimeout(() => tracker.resolve(),
-                         Math.max(30000, (seg.end - seg.start) * 4000))
+      Math.max(30000, (seg.end - seg.start) * 4000))
     await tracker.promise
     clearTimeout(t)
     const text = tracker.transcriptions.map(s => s.text).join(' ').trim()

@@ -20,7 +20,6 @@ const {
   getTestPaths,
   validateAccuracy,
   loadGgufOrSkip,
-  ensureModel,
   getNamedPathsConfig,
   isMobile
 } = require('./helpers.js')

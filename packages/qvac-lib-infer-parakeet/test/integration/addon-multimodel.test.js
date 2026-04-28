@@ -8,7 +8,6 @@ const {
   ParakeetInterface,
   setupJsLogger,
   getTestPaths,
-  ensureGgufForType,
   loadGgufOrSkip,
   getNamedPathsConfig
 } = require('./helpers.js')
