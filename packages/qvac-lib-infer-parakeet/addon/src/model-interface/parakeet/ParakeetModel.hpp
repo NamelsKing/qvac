@@ -253,7 +253,6 @@ private:
   int64_t                              melSpecMs_            = 0;
   int64_t                              encoderMs_            = 0;
   int64_t                              decoderMs_            = 0;
-  int64_t                              totalMelFrames_       = 0;
   int64_t                              totalEncodedFrames_   = 0;
 
   mutable std::atomic_uint64_t         nextGeneration_   = 1;

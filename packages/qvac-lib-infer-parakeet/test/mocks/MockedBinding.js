@@ -19,11 +19,12 @@ class MockedBinding {
   }
 
   createInstance (interfaceType, configurationParams, outputCb, transitionCb = null) {
-    console.log('Constructing the parakeet addon')
+    console.log('Constructing the parakeet addon (ggml backend)')
     this._interfaceType = interfaceType
+    this._config = configurationParams
     this.outputCb = outputCb
     this.transitionCb = transitionCb
-    this._handle = { id: Date.now() } // Create a mock handle
+    this._handle = { id: Date.now() }
     return this._handle
   }
 
@@ -35,7 +36,10 @@ class MockedBinding {
 
   loadWeights (handle, data) {
     if (handle !== this._handle) throw new Error('Invalid handle')
-    console.log(`Loading weights: ${data.filename || data}`)
+    // Real binding accepts a single GGUF byte stream (`{ filename,
+    // chunk, completed }`). The mock just logs the filename to
+    // confirm the right shape was passed.
+    console.log(`Loading GGUF: ${data?.filename || '<inline>'}`)
     return true
   }
 
@@ -113,7 +117,24 @@ class MockedBinding {
       }
 
       this._callCallbacks('Output', [mockTranscription], null)
-      this._callCallbacks('RuntimeStats', { totalTime: 0.001, audioDurationMs: Math.floor((audioLength / 16000) * 1000), totalSamples: audioLength }, null)
+      // Mirror the realistic key set ParakeetModel::runtimeStats()
+      // emits (see addon/src/model-interface/parakeet/ParakeetModel.cpp)
+      // so tests inspecting stats see the GGUF-backend shape.
+      const audioDurationMs = Math.floor((audioLength / 16000) * 1000)
+      this._callCallbacks('RuntimeStats', {
+        processCalls: 1,
+        totalSamples: audioLength,
+        totalTokens: 0,
+        totalTranscriptions: 1,
+        totalWallMs: 1,
+        totalTime: 1,
+        modelLoadMs: 0,
+        encoderMs: 1,
+        decoderMs: 0,
+        melSpecMs: 0,
+        totalEncodedFrames: 0,
+        audioDurationMs
+      }, null)
       this._busy = false
       this._state = state.LISTENING
       if (this.transitionCb) this.transitionCb(this, this._state)

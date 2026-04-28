@@ -165,14 +165,14 @@ declare class TranscriptionParakeet {
 declare namespace TranscriptionParakeet {
   /**
    * Keys returned by the native addon `ParakeetModel::runtimeStats()`
-   * when stats are enabled. `totalTime` is wall time in seconds;
-   * `audioDurationMs` and other `*Ms` fields are milliseconds where applicable.
+   * when stats are enabled. `totalTime` and `totalWallMs` are wall
+   * time in milliseconds; `audioDurationMs` and other `*Ms` fields
+   * are milliseconds where applicable. `decoderMs`, `melSpecMs`,
+   * `totalEncodedFrames`, and `totalTokens` are populated only by
+   * the offline ASR path and stay 0 for streaming / Sortformer.
    */
   export interface RuntimeStats {
     totalTime: number
-    realTimeFactor: number
-    tokensPerSecond: number
-    msPerToken: number
     audioDurationMs: number
     totalSamples: number
     totalTokens: number
@@ -183,7 +183,6 @@ declare namespace TranscriptionParakeet {
     encoderMs: number
     decoderMs: number
     totalWallMs: number
-    totalMelFrames: number
     totalEncodedFrames: number
   }
 

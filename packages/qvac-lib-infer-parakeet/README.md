@@ -364,7 +364,7 @@ Per-tier sizes (`f16` / `q8_0` / `q4_0`) are listed in the [`parakeet-cpp` READM
 - [`examples/diarized-transcribe.js`](examples/diarized-transcribe.js) -- combined Sortformer + ASR pipeline ("who said what").
 - [`examples/live-mic.js`](examples/live-mic.js) -- live microphone transcription via `sox` and the streaming session.
 - [`examples/live-mic-diarized.js`](examples/live-mic-diarized.js) -- live mic with parallel Sortformer + ASR for speaker-tagged transcripts.
-- [`examples/decode-audio.js`](examples/decode-audio.js) -- standalone `@qvac/decoder-audio` example for decoding non-WAV formats into the s16le PCM the engine expects.
+- [`examples/decode-audio.js`](examples/decode-audio.js) -- decode + transcribe in one step. Same flag surface as `transcribe.js` but pipes the input through `@qvac/decoder-audio` (FFmpeg) first, so any container / codec FFmpeg supports (mp3, m4a, ogg, flac, mp4, ...) works -- not just 16 kHz mono `.wav` / raw s16le PCM.
 - [`examples/utils.js`](examples/utils.js) -- shared helpers used by the examples (`loadWeights` streaming, `Output`/`JobEnded` race resolution).
 
 ## Glossary

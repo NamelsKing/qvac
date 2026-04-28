@@ -73,19 +73,14 @@
   "homepage": "https://github.com/tetherto/qvac/tree/main/packages/qvac-lib-infer-parakeet#readme",
   "devDependencies": {
     "@qvac/decoder-audio": "^0.3.3",
-    "@qvac/dl-base": "^0.1.0",
-    "@qvac/dl-filesystem": "^0.1.0",
-    "bare-buffer": "^3.4.2",
     "brittle": "^3.17.0",
     "cmake-bare": "^1.7.5",
     "cmake-vcpkg": "^1.1.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
-    "os": "npm:bare-os@^3.6.2",
     "sinon": "^21.0.0",
     "standard": "^17.1.2",
-    "tty": "npm:bare-node-tty",
-    "util": "npm:bare-utils@^1.5.1"
+    "typescript": "^6.0.3"
   },
   "dependencies": {
     "@qvac/error": "^0.1.0",
@@ -94,9 +89,7 @@
     "bare-fs": "^4.5.1",
     "bare-path": "^3.0.0",
     "bare-subprocess": "^5.2.3",
-    "path": "npm:bare-path",
-    "process": "npm:bare-process@^4.2.2",
-    "typescript": "^6.0.3"
+    "process": "npm:bare-process@^4.2.2"
   },
   "exports": {
     "./package": "./package.json",
