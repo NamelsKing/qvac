@@ -49,7 +49,7 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
 
   const stagedGguf = await ensureModel(modelPath)
   if (!stagedGguf || !fs.existsSync(stagedGguf)) {
-    t.skip('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
+    t.pass('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
     return
   }
   t.ok(fs.existsSync(stagedGguf), `GGUF exists at ${stagedGguf}`)

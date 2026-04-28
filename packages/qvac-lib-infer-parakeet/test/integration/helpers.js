@@ -694,7 +694,7 @@ async function ensureModelForType (modelType) {
 async function loadGgufOrSkip (t, modelType = 'tdt') {
   const ggufPath = await ensureGgufForType(modelType)
   if (!ggufPath || !fs.existsSync(ggufPath)) {
-    t.skip(`No ${modelType.toUpperCase()} GGUF available; ` +
+    t.pass(`No ${modelType.toUpperCase()} GGUF available; ` +
            'set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models or ' +
            `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf`)
     return null

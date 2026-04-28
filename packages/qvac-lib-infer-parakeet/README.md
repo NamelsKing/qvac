@@ -160,24 +160,27 @@ The library wraps `qvac-parakeet.cpp`'s engine in the QVAC addon framework so yo
 
 ### 1. Stage a Model
 
-The ggml backend takes a single `.gguf` per checkpoint. The standard flow is "download `.nemo` from HuggingFace, convert to `.gguf` via `qvac-parakeet.cpp`'s converter":
+The ggml backend takes a single `.gguf` per checkpoint. The standard flow is "provision a Python venv, download `.nemo` from HuggingFace, convert to `.gguf` via the in-tree converter":
 
 ```bash
-npm run setup-models                       # downloads + converts all 4 models, q8_0
+npm run setup-models                       # venv + download + convert, all 4 models, q8_0
 npm run setup-models -- -t tdt             # just TDT
 npm run setup-models -- -t eou -q f16      # full-precision EOU
 ```
 
-Output GGUFs land in `./models/`. The conversion step uses `qvac-parakeet.cpp`'s Python venv automatically when a sibling `~/dev/qvac-parakeet.cpp` checkout is present; otherwise pass `--python /path/to/venv/bin/python` (NeMo + `gguf` + numpy + torch required).
+`setup-models` chains `setup-venv` -> `download-models` -> `convert-models`. The venv step is idempotent (skipped if `./venv` already has the required interpreter), so re-running `setup-models` after a successful first run only re-checks the downloads and conversions.
 
-The two underlying scripts are also flag-driven if you want to run them separately:
+Output GGUFs land in `./models/`. The conversion is driven by `scripts/convert-nemo-to-gguf.py` (vendored from `qvac-parakeet.cpp`; resync on bump) and runs against the local `./venv`. The venv only needs `gguf`, `numpy`, `torch`, and `pyyaml` -- the converter reads the `.nemo` archive directly via `tarfile` + `torch.load` and does **not** depend on the heavy `nemo_toolkit` package despite the file extension. Full requirement list lives at `scripts/requirements.txt`. To use a pre-existing interpreter instead of `./venv`, pass `--python /path/to/python` to either script (or set `PYTHON=...`).
+
+The three underlying scripts are also flag-driven if you want to run them separately:
 
 ```
+setup-venv.sh      [--python <bin>] [--venv <path>] [--force] [--help]
 download-models.sh [--type ctc|tdt|eou|sortformer|all]
                    [--output <dir>] [--force] [--help]
 convert-nemo.sh    [--type ctc|tdt|eou|sortformer|all]
                    [--quant f16|q8_0|q5_0|q4_0|f32]
-                   [--parakeet-cpp <path>] [--python <bin>]
+                   [--python <bin>]
                    [--nemo-dir <dir>] [--output <dir>] [--force] [--help]
 ```
 

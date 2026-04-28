@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
 # Convert staged Parakeet `.nemo` checkpoints into the single-file
-# `.gguf` format the ggml backend consumes. Wraps
-# qvac-parakeet.cpp's `scripts/convert-nemo-to-gguf.py` so this binding
-# stays self-contained from the user's POV (run `download-models.sh`
-# then this).
+# `.gguf` format the ggml backend consumes. Wraps the in-tree
+# `scripts/convert-nemo-to-gguf.py` (vendored from qvac-parakeet.cpp;
+# see the file's header comment).
 #
 # Requirements:
-#   - A local checkout of qvac-parakeet.cpp with its python venv set up
-#     (the converter uses NeMo + numpy + the gguf python package). See
-#     qvac-parakeet.cpp/scripts/setup-nemo-venv.sh for one recipe.
+#   - A Python venv at ./venv with `gguf`, `numpy`, `torch`, `pyyaml`
+#     installed. Run `./scripts/setup-venv.sh` (or `npm run setup:venv`)
+#     once -- the converter does not depend on the heavy `nemo_toolkit`
+#     package, despite the .nemo extension.
 #   - The downloaded `.nemo` files in ./models/nemo (run
 #     `./scripts/download-models.sh` first).
 #
@@ -19,11 +19,10 @@
 # Flags:
 #   --type, -t <ctc|tdt|eou|sortformer|all>     Which model(s) (default: all)
 #   --quant, -q <f16|q8_0|q5_0|q4_0|f32>        Quant tier (default: q8_0)
-#   --parakeet-cpp, -p <path>                   qvac-parakeet.cpp checkout
-#                                               (default: $QVAC_PARAKEET_CPP_DIR
-#                                                or ~/dev/qvac-parakeet.cpp)
-#   --python <bin>                              Python interpreter
-#                                               (default: $PYTHON or python3)
+#   --python <bin>                              Python interpreter (default:
+#                                                $PYTHON, then ./venv/bin/python,
+#                                                then ./venv/Scripts/python.exe,
+#                                                then python3 from PATH)
 #   --nemo-dir <path>                           Source .nemo dir
 #                                               (default: ./models/nemo)
 #   --output, -o <path>                         GGUF output dir
@@ -34,14 +33,13 @@
 # Examples:
 #   ./scripts/convert-nemo.sh                          # all 4, q8_0
 #   ./scripts/convert-nemo.sh -t tdt -q q4_0           # TDT q4_0 only
-#   ./scripts/convert-nemo.sh -p ~/work/parakeet.cpp   # custom checkout
+#   ./scripts/convert-nemo.sh --python /usr/local/bin/python3.11
 
 set -euo pipefail
 
 TYPE="all"
 QUANT="q8_0"
-PARAKEET_CPP="${QVAC_PARAKEET_CPP_DIR:-$HOME/dev/qvac-parakeet.cpp}"
-PYTHON_BIN="${PYTHON:-python3}"
+PYTHON_BIN="${PYTHON:-}"
 NEMO_DIR="./models/nemo"
 OUTPUT_DIR="./models"
 FORCE=0
@@ -52,14 +50,13 @@ print_usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --type|-t)         TYPE="$2"; shift 2;;
-    --quant|-q)        QUANT="$2"; shift 2;;
-    --parakeet-cpp|-p) PARAKEET_CPP="$2"; shift 2;;
-    --python)          PYTHON_BIN="$2"; shift 2;;
-    --nemo-dir)        NEMO_DIR="$2"; shift 2;;
-    --output|-o)       OUTPUT_DIR="$2"; shift 2;;
-    --force|-f)        FORCE=1; shift;;
-    --help|-h)         print_usage; exit 0;;
+    --type|-t)   TYPE="$2"; shift 2;;
+    --quant|-q)  QUANT="$2"; shift 2;;
+    --python)    PYTHON_BIN="$2"; shift 2;;
+    --nemo-dir)  NEMO_DIR="$2"; shift 2;;
+    --output|-o) OUTPUT_DIR="$2"; shift 2;;
+    --force|-f)  FORCE=1; shift;;
+    --help|-h)   print_usage; exit 0;;
     *) echo "Unknown flag: $1" >&2; print_usage; exit 2;;
   esac
 done
@@ -73,34 +70,38 @@ case "$QUANT" in
   *) echo "Error: --quant must be f32|f16|q8_0|q5_0|q4_0" >&2; exit 2;;
 esac
 
-CONVERTER="$PARAKEET_CPP/scripts/convert-nemo-to-gguf.py"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONVERTER="$SCRIPT_DIR/convert-nemo-to-gguf.py"
+
 if [[ ! -f "$CONVERTER" ]]; then
   echo "Error: converter not found at $CONVERTER" >&2
-  echo "       set --parakeet-cpp / QVAC_PARAKEET_CPP_DIR to a valid checkout." >&2
+  echo "       (the vendored copy should sit next to this script)" >&2
   exit 1
 fi
 
-# If --python wasn't explicitly set and qvac-parakeet.cpp ships a venv
-# at venv/bin/python, prefer it -- it has NeMo + gguf preinstalled. The
-# system python3 typically does not.
-if [[ "$PYTHON_BIN" == "python3" ]] && [[ -z "${PYTHON:-}" ]]; then
-  if [[ -x "$PARAKEET_CPP/venv/bin/python" ]]; then
-    PYTHON_BIN="$PARAKEET_CPP/venv/bin/python"
-    echo "Using qvac-parakeet.cpp venv python: $PYTHON_BIN"
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x "$PKG_DIR/venv/bin/python" ]]; then
+    PYTHON_BIN="$PKG_DIR/venv/bin/python"
+  elif [[ -x "$PKG_DIR/venv/Scripts/python.exe" ]]; then
+    PYTHON_BIN="$PKG_DIR/venv/Scripts/python.exe"
+  else
+    PYTHON_BIN="python3"
   fi
 fi
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Error: python interpreter not found: $PYTHON_BIN" >&2
-  echo "       set --python or PYTHON to a valid interpreter (NeMo + gguf required)." >&2
+  echo "       run \`npm run setup:venv\` or pass --python <bin>." >&2
   exit 1
 fi
 
 # Sanity-check the python env has the modules the converter needs.
-# Failing fast here is better than 4 cryptic ModuleNotFoundError dumps.
+# Failing fast here is better than a cryptic ModuleNotFoundError dump
+# in the middle of the first model.
 missing_modules=$("$PYTHON_BIN" -c '
 import sys
-mods = ["nemo", "gguf", "numpy", "torch"]
+mods = ["gguf", "numpy", "torch", "yaml"]
 missing = []
 for m in mods:
     try:
@@ -116,12 +117,11 @@ if [[ "$missing_modules" == "PYTHON_BROKEN" ]]; then
 fi
 if [[ -n "$missing_modules" ]]; then
   echo "Error: python at $PYTHON_BIN is missing required module(s): ${missing_modules//,/, }" >&2
-  echo "       Use the qvac-parakeet.cpp venv (see its scripts/setup-nemo-venv.sh)" >&2
-  echo "       or pass --python /path/to/venv/bin/python with NeMo + gguf installed." >&2
+  echo "       run \`npm run setup:venv\` to provision ./venv with scripts/requirements.txt," >&2
+  echo "       or pass --python /path/to/venv/bin/python with those modules installed." >&2
   exit 1
 fi
 
-# (model-type) -> (input .nemo basename, output .gguf basename)
 nemo_filename() {
   case "$1" in
     ctc)        echo "parakeet-ctc-0.6b.nemo";;
@@ -155,44 +155,41 @@ convert_one() {
   local gguf; gguf="$OUTPUT_DIR/$(gguf_filename "$t" "$QUANT")"
 
   if [[ ! -f "$nemo" ]]; then
-    echo "  ✗ ${t}: .nemo missing -- expected ${nemo}"
+    echo "  x ${t}: .nemo missing -- expected ${nemo}"
     echo "         run \`./scripts/download-models.sh -t ${t}\` first."
     return 1
   fi
   if [[ -f "$gguf" ]] && [[ "$FORCE" -eq 0 ]]; then
     local sz; sz=$(stat -f%z "$gguf" 2>/dev/null || stat -c%s "$gguf" 2>/dev/null || echo 0)
     if [[ "$sz" -gt 0 ]]; then
-      echo "  ✓ ${t}: already converted ($(bytes_human "$sz")) -- pass --force to redo"
+      echo "  - ${t}: already converted ($(bytes_human "$sz")) -- pass --force to redo"
       return 0
     fi
-    # 0-byte stub from an earlier failed run; treat as missing and redo.
     rm -f "$gguf"
   fi
 
   mkdir -p "$OUTPUT_DIR"
-  echo "  ▶ ${t}: converting at quant=${QUANT}"
-  # Run the python converter with explicit exit-code handling so a
-  # NeMo / gguf import error doesn't sneak past `set -e` (functions
-  # invoked under `||` have set -e implicitly disabled, bash gotcha).
+  echo "  > ${t}: converting at quant=${QUANT}"
   if ! "$PYTHON_BIN" "$CONVERTER" \
         --ckpt  "$nemo" \
         --out   "$gguf" \
         --quant "$QUANT"; then
-    echo "  ✗ ${t}: conversion failed (see python traceback above)"
+    echo "  x ${t}: conversion failed (see python traceback above)"
     rm -f "$gguf"
     return 1
   fi
   if [[ ! -s "$gguf" ]]; then
-    echo "  ✗ ${t}: conversion produced an empty file -- removing"
+    echo "  x ${t}: conversion produced an empty file -- removing"
     rm -f "$gguf"
     return 1
   fi
   local sz; sz=$(stat -f%z "$gguf" 2>/dev/null || stat -c%s "$gguf" 2>/dev/null || echo 0)
-  echo "  ✓ ${t}: $(basename "$gguf") ($(bytes_human "$sz"))"
+  echo "  - ${t}: $(basename "$gguf") ($(bytes_human "$sz"))"
 }
 
 echo "Converting .nemo -> .gguf -- type=${TYPE} quant=${QUANT}"
 echo "Converter: ${CONVERTER}"
+echo "Python:    ${PYTHON_BIN}"
 echo ".nemo dir: ${NEMO_DIR}"
 echo "Output:    ${OUTPUT_DIR}"
 echo
