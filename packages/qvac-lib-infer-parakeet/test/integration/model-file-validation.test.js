@@ -6,14 +6,18 @@ const fs = require('bare-fs')
 const os = require('bare-os')
 const {
   TranscriptionParakeet,
-  ensureModel,
-  getTestPaths,
+  loadGgufOrSkip,
   isMobile
 } = require('./helpers.js')
 
-/**
- * Test 1: Empty files map is accepted (validation only warns for missing files)
- */
+// The GGUF backend collapses the legacy onnx multi-file
+// model layout into a single `.gguf` per checkpoint, so the
+// per-modelType "named paths" surface (encoderPath, decoderPath,
+// ctcModelPath, ...) collapses to one `modelPath` field. These tests
+// therefore only cover the validation behaviour that's still
+// meaningful: empty files map, non-existent paths, and an actual
+// GGUF on disk being accepted.
+
 test('Should accept empty files map without throwing', { timeout: 60000 }, async (t) => {
   if (isMobile) { t.pass('Skipped on mobile'); return }
   TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
@@ -30,9 +34,6 @@ test('Should accept empty files map without throwing', { timeout: 60000 }, async
   }
 })
 
-/**
- * Test 2: Non-existent file paths produce warnings but do not throw
- */
 test('Non-existent file paths produce warnings but do not throw', { timeout: 60000 }, async (t) => {
   if (isMobile) { t.pass('Skipped on mobile'); return }
   TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
@@ -40,10 +41,12 @@ test('Non-existent file paths produce warnings but do not throw', { timeout: 600
   try {
     const model = new TranscriptionParakeet({
       files: {
+        // legacy ONNX-shaped fields are still accepted by the wrapper
+        // for back-compat; the validator just emits a warning when the
+        // file is missing rather than throwing.
         encoder: '/this/path/definitely/does/not/exist/encoder.onnx',
         decoder: '/this/path/definitely/does/not/exist/decoder.onnx',
-        vocab: '/this/path/definitely/does/not/exist/vocab.txt',
-        preprocessor: '/this/path/definitely/does/not/exist/preprocessor.onnx'
+        vocab: '/this/path/definitely/does/not/exist/vocab.txt'
       },
       config: { parakeetConfig: { modelType: 'tdt' } }
     })
@@ -54,148 +57,63 @@ test('Non-existent file paths produce warnings but do not throw', { timeout: 600
   }
 })
 
-/**
- * Test 3: Valid file paths do not produce warnings or errors
- */
-test('Should not warn when model files exist at provided paths', { timeout: 180000 }, async (t) => {
+test('Should accept a valid GGUF path and pass validation', { timeout: 60000 }, async (t) => {
   if (isMobile) { t.pass('Skipped on mobile'); return }
   TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
 
-  const { modelPath: testModelPath } = getTestPaths()
-  await ensureModel(testModelPath)
+  const ggufPath = await loadGgufOrSkip(t, 'tdt')
+  if (!ggufPath) return
 
   try {
     const model = new TranscriptionParakeet({
-      files: {
-        encoder: path.join(testModelPath, 'encoder-model.onnx'),
-        encoderData: path.join(testModelPath, 'encoder-model.onnx.data'),
-        decoder: path.join(testModelPath, 'decoder_joint-model.onnx'),
-        vocab: path.join(testModelPath, 'vocab.txt'),
-        preprocessor: path.join(testModelPath, 'preprocessor.onnx')
-      },
-      config: { parakeetConfig: { modelType: 'tdt' } }
+      config: {
+        parakeetConfig: { modelType: 'tdt', modelPath: ggufPath }
+      }
     })
-    t.ok(model, 'Model should be created successfully with valid file paths')
-    t.pass('No exception thrown when all file paths are valid')
+    t.ok(model, 'Model instance created with valid GGUF path')
+    t.ok(fs.existsSync(ggufPath), 'GGUF file exists at the supplied path')
   } catch (error) {
     t.fail('Should not have thrown an error: ' + error.message)
   }
 })
 
-/**
- * Test 4: Validation happens in constructor
- */
-test('Model validation happens in constructor', { timeout: 60000 }, async (t) => {
+test('Validation runs in the constructor (no async load required)', { timeout: 60000 }, async (t) => {
   if (isMobile) { t.pass('Skipped on mobile'); return }
   TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
 
+  // No file paths supplied; constructor just runs validateModelFiles
+  // (which warns on missing paths) and returns. Should never throw.
   try {
     const model = new TranscriptionParakeet({
       files: {},
       config: { parakeetConfig: { modelType: 'tdt' } }
     })
-    t.ok(model, 'Constructor completes — validation ran without throw for empty files')
+    t.ok(model, 'Constructor completes without throw')
   } catch (error) {
     t.fail('Constructor threw unexpectedly: ' + error.message)
   }
 })
 
-/**
- * Test 5: CTC model type resolves correct files from the files map
- */
-test('Should resolve CTC model file paths correctly', { timeout: 60000 }, async (t) => {
-  if (isMobile) { t.pass('Skipped on mobile'); return }
-  TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
+test('Provides a tmp scratch dir without polluting cwd', { timeout: 60000 }, async (t) => {
+  // Sanity check that file-validation tests don't write into the
+  // package source tree by accident.
+  const tmpDir = path.join(os.tmpdir(), '.parakeet-test-validation-scratch')
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
 
-  const testDir = path.join(os.tmpdir(), '.parakeet-test-models')
-  const ctcModelPath = path.join(testDir, 'test-ctc-model')
+  // Write a stub file -- must succeed.
+  const stub = path.join(tmpDir, 'stub.gguf')
+  fs.writeFileSync(stub, 'GGUF\x03\x00\x00\x00')
+  t.ok(fs.existsSync(stub), 'Stub GGUF written to scratch dir')
 
-  if (!fs.existsSync(ctcModelPath)) {
-    fs.mkdirSync(ctcModelPath, { recursive: true })
-  }
+  // Create a model with that file path -- the binary content is
+  // intentionally bogus, so the wrapper should still accept it (it's
+  // a valid path; load-time validation happens later).
+  const model = new TranscriptionParakeet({
+    config: {
+      parakeetConfig: { modelType: 'tdt', modelPath: stub }
+    }
+  })
+  t.ok(model, 'Wrapper accepts a path-only configuration')
 
-  const modelOnnx = path.join(ctcModelPath, 'model.onnx')
-  const tokenizer = path.join(ctcModelPath, 'tokenizer.json')
-
-  try {
-    const model = new TranscriptionParakeet({
-      files: { model: modelOnnx, tokenizer },
-      config: { parakeetConfig: { modelType: 'ctc' } }
-    })
-    t.ok(model, 'CTC model instance created')
-    t.is(model._resolveFilePath('model.onnx'), modelOnnx, 'model.onnx resolves to files.model')
-    t.is(model._resolveFilePath('tokenizer.json'), tokenizer, 'tokenizer.json resolves to files.tokenizer')
-  } catch (error) {
-    t.fail('Should not throw: ' + error.message)
-  }
-
-  if (fs.existsSync(ctcModelPath)) {
-    try { fs.rmSync(ctcModelPath, { recursive: true }) } catch (e) {}
-  }
-})
-
-/**
- * Test 6: EOU model type resolves correct files from the files map
- */
-test('Should resolve EOU model file paths correctly', { timeout: 60000 }, async (t) => {
-  if (isMobile) { t.pass('Skipped on mobile'); return }
-  TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
-
-  const testDir = path.join(os.tmpdir(), '.parakeet-test-models')
-  const eouModelPath = path.join(testDir, 'test-eou-model')
-
-  if (!fs.existsSync(eouModelPath)) {
-    fs.mkdirSync(eouModelPath, { recursive: true })
-  }
-
-  const eouEncoder = path.join(eouModelPath, 'encoder.onnx')
-  const eouDecoder = path.join(eouModelPath, 'decoder_joint.onnx')
-
-  try {
-    const model = new TranscriptionParakeet({
-      files: { eouEncoder, eouDecoder },
-      config: { parakeetConfig: { modelType: 'eou' } }
-    })
-    t.ok(model, 'EOU model instance created')
-    t.is(model._resolveFilePath('encoder.onnx'), eouEncoder, 'encoder.onnx resolves to files.eouEncoder')
-    t.is(model._resolveFilePath('decoder_joint.onnx'), eouDecoder, 'decoder_joint.onnx resolves to files.eouDecoder')
-  } catch (error) {
-    t.fail('Should not throw: ' + error.message)
-  }
-
-  if (fs.existsSync(eouModelPath)) {
-    try { fs.rmSync(eouModelPath, { recursive: true }) } catch (e) {}
-  }
-})
-
-/**
- * Test 7: Sortformer model type resolves correct files from the files map
- */
-test('Should resolve Sortformer model file paths correctly', { timeout: 60000 }, async (t) => {
-  if (isMobile) { t.pass('Skipped on mobile'); return }
-  TranscriptionParakeet.prototype.validateModelFiles?.restore?.()
-
-  const testDir = path.join(os.tmpdir(), '.parakeet-test-models')
-  const sfModelPath = path.join(testDir, 'test-sortformer-model')
-
-  if (!fs.existsSync(sfModelPath)) {
-    fs.mkdirSync(sfModelPath, { recursive: true })
-  }
-
-  const sortformerFile = path.join(sfModelPath, 'sortformer.onnx')
-
-  try {
-    const model = new TranscriptionParakeet({
-      files: { sortformer: sortformerFile },
-      config: { parakeetConfig: { modelType: 'sortformer' } }
-    })
-    t.ok(model, 'Sortformer model instance created')
-    t.is(model._resolveFilePath('sortformer.onnx'), sortformerFile, 'sortformer.onnx resolves to files.sortformer')
-  } catch (error) {
-    t.fail('Should not throw: ' + error.message)
-  }
-
-  if (fs.existsSync(sfModelPath)) {
-    try { fs.rmSync(sfModelPath, { recursive: true }) } catch (e) {}
-  }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (e) { /* ignore */ }
 })

@@ -36,19 +36,26 @@ function detectPlatform () {
 }
 
 /**
- * Wait until model reaches idle state
+ * Wait until the model is no longer mid-job (state != PROCESSING).
+ *
+ * Note: the wrapper's `IDLE` state is only entered inside
+ * `destroyInstance()` itself, so the legacy "waitUntilIdle" semantics
+ * always timed out at `maxMs`. This helper now waits for "not
+ * processing" (LISTENING is the steady post-job state), which is what
+ * cleanup callers actually want before tearing the instance down.
+ *
  * @param {Object} model - TranscriptionParakeet instance
- * @param {number} [maxMs=30000] - Maximum wait time in milliseconds
- * @returns {Promise<boolean>} True if idle state reached
+ * @param {number} [maxMs=10000] - Maximum wait time in milliseconds
+ * @returns {Promise<boolean>} True if the model left PROCESSING in time
  */
-async function waitUntilIdle (model, maxMs = 30000) {
+async function waitUntilIdle (model, maxMs = 10000) {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
     try {
       const s = await model.status()
-      if (s === 'IDLE') return true
+      if (s !== 'PROCESSING') return true
     } catch {}
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, 100))
   }
   return false
 }
@@ -265,7 +272,11 @@ function getTestPaths (modelsDir = null) {
   return {
     modelsDir: actualModelsDir,
     samplesDir,
-    modelPath: path.join(actualModelsDir, 'parakeet-tdt-0.6b-v3-onnx'),
+    // GGUF backend ships a single .gguf per model. Default
+    // points at the q8_0 TDT GGUF (closest analogue to the legacy ONNX
+    // `parakeet-tdt-0.6b-v3-onnx` directory). Override per-test when a
+    // different model type is needed.
+    modelPath: path.join(actualModelsDir, 'parakeet-tdt-0.6b-v3.q8_0.gguf'),
     audioPath: path.join(samplesDir, 'sample-16k.wav'),
     isMobile
   }
@@ -385,66 +396,22 @@ async function downloadFile (url, destPath) {
 }
 
 /**
- * Ensures the TDT model is downloaded and available
- * Downloads from HuggingFace if not present
- * @param {string} [modelPath] - Optional model path (defaults to standard location)
- * @returns {Promise<string>} Path to the model directory
+ * Ensures the default test GGUF model is downloaded and available.
+ * The ggml backend ships a single `.gguf` per checkpoint; we default to the
+ * q8_0 quantisation of `parakeet-tdt-0.6b-v3` since it's the closest
+ * analogue to the legacy onnx multilingual reference.
+ *
+ * Model files can be staged in two ways:
+ *   1. Download from HuggingFace (slow on first run; cached afterwards).
+ *      QVAC_TEST_GGUF_BASE_URL overrides the base URL.
+ *   2. Copy from a local qvac-parakeet.cpp checkout via QVAC_TEST_GGUF_DIR.
+ *      Useful in dev so the suite doesn't re-download a 700 MB file.
+ *
+ * @param {string} [modelPath] - Optional override for the GGUF path
+ * @returns {Promise<string>} Path to the .gguf file
  */
 async function ensureModel (modelPath = null) {
-  const { modelsDir } = getTestPaths()
-  const targetPath = modelPath || path.join(modelsDir, 'parakeet-tdt-0.6b-v3-onnx')
-
-  const requiredFiles = [
-    { file: 'encoder-model.onnx', minSize: 1000 },
-    { file: 'encoder-model.onnx.data', minSize: 100000000 },
-    { file: 'decoder_joint-model.onnx', minSize: 1000000 },
-    { file: 'vocab.txt', minSize: 100 },
-    { file: 'preprocessor.onnx', minSize: 100000 }
-  ]
-
-  const allFilesExist = requiredFiles.every(({ file, minSize }) => {
-    const p = path.join(targetPath, file)
-    if (!fs.existsSync(p)) return false
-    return fs.statSync(p).size >= minSize
-  })
-
-  if (allFilesExist) {
-    console.log('Model already downloaded')
-    return targetPath
-  }
-
-  console.log('Downloading TDT model from HuggingFace...')
-
-  // Create model directory
-  if (!fs.existsSync(targetPath)) {
-    fs.mkdirSync(targetPath, { recursive: true })
-  }
-
-  const baseUrl = 'https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main'
-  const preprocessorUrl = 'https://huggingface.co/ysdede/parakeet-tdt-0.6b-v2-onnx/resolve/main/nemo128.onnx'
-
-  const downloads = [
-    { url: `${baseUrl}/encoder-model.onnx`, file: 'encoder-model.onnx', minSize: 1000 },
-    { url: `${baseUrl}/encoder-model.onnx.data`, file: 'encoder-model.onnx.data', minSize: 100000000 },
-    { url: `${baseUrl}/decoder_joint-model.onnx`, file: 'decoder_joint-model.onnx', minSize: 1000000 },
-    { url: `${baseUrl}/vocab.txt`, file: 'vocab.txt', minSize: 100 },
-    { url: preprocessorUrl, file: 'preprocessor.onnx', minSize: 100000 }
-  ]
-
-  for (const { url, file, minSize } of downloads) {
-    const destPath = path.join(targetPath, file)
-    if (fs.existsSync(destPath)) {
-      const size = fs.statSync(destPath).size
-      if (size >= minSize) continue
-      console.log(`  Cached ${file} too small (${size} bytes), re-downloading...`)
-      fs.unlinkSync(destPath)
-    }
-    console.log(`  Downloading ${file}...`)
-    await downloadFile(url, destPath)
-  }
-
-  console.log('Model download complete')
-  return targetPath
+  return ensureGgufForType('tdt', modelPath)
 }
 
 /**
@@ -488,19 +455,20 @@ async function runTranscription (params, expectation = {}) {
   }
 
   const { modelsDir } = getTestPaths()
-  const defaultModelPath = path.join(modelsDir, 'parakeet-tdt-0.6b-v3-onnx')
-
-  const modelPath = params.modelPath || defaultModelPath
   const parakeetConfig = params.parakeetConfig || {}
   const modelType = parakeetConfig.modelType || 'tdt'
+  const defaultModelPath =
+      path.join(modelsDir, MODEL_CONFIGS[modelType]?.file ||
+                           MODEL_CONFIGS.tdt.file)
 
+  const modelPath = params.modelPath || defaultModelPath
   const files = params.files || getNamedPathsConfig(modelType, modelPath)
 
   if (typeof modelPath === 'string' && !fs.existsSync(modelPath)) {
     return {
-      output: `Error: Model directory not found: ${modelPath}`,
+      output: `Error: GGUF not found: ${modelPath}`,
       passed: false,
-      data: { error: `Model directory not found: ${modelPath}` }
+      data: { error: `GGUF not found: ${modelPath}` }
     }
   }
 
@@ -616,110 +584,138 @@ async function runTranscription (params, expectation = {}) {
   }
 }
 
+// GGUF model staging. Each entry is a single self-contained
+// `.gguf` file produced by `scripts/convert-nemo-to-gguf.py`. The
+// integration suite either downloads it from a HuggingFace mirror or
+// copies it from a local qvac-parakeet.cpp `models/` directory pointed
+// at by the `QVAC_TEST_GGUF_DIR` env var.
+//
+// Quantisation: we default to q8_0 (1.9x smaller than f16, no
+// user-facing transcript regressions on shipping fixtures). Tests can
+// override per-model with QVAC_TEST_GGUF_<TYPE> (e.g.
+// QVAC_TEST_GGUF_EOU=/path/to/parakeet-eou-120m-v1.f16.gguf).
 const MODEL_CONFIGS = {
   ctc: {
-    dirName: 'parakeet-ctc-0.6b-onnx',
-    files: [
-      { url: 'https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/onnx/model.onnx', file: 'model.onnx', minSize: 1000 },
-      { url: 'https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/onnx/model.onnx_data', file: 'model.onnx_data', minSize: 100000000 },
-      { url: 'https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/tokenizer.json', file: 'tokenizer.json', minSize: 100 }
-    ]
+    file: 'parakeet-ctc-0.6b.q8_0.gguf',
+    minSize: 600 * 1024 * 1024,
+    url: null
+  },
+  tdt: {
+    file: 'parakeet-tdt-0.6b-v3.q8_0.gguf',
+    minSize: 600 * 1024 * 1024,
+    url: null
   },
   eou: {
-    dirName: 'parakeet-eou-120m-v1-onnx',
-    files: [
-      { url: 'https://huggingface.co/altunenes/parakeet-rs/resolve/main/realtime_eou_120m-v1-onnx/encoder.onnx', file: 'encoder.onnx', minSize: 100000 },
-      { url: 'https://huggingface.co/altunenes/parakeet-rs/resolve/main/realtime_eou_120m-v1-onnx/decoder_joint.onnx', file: 'decoder_joint.onnx', minSize: 100000 },
-      { url: 'https://huggingface.co/altunenes/parakeet-rs/resolve/main/realtime_eou_120m-v1-onnx/tokenizer.json', file: 'tokenizer.json', minSize: 100 }
-    ]
+    file: 'parakeet-eou-120m-v1.q8_0.gguf',
+    minSize: 100 * 1024 * 1024,
+    url: null
   },
   sortformer: {
-    dirName: 'sortformer-4spk-v2-onnx',
-    files: [
-      { url: 'https://huggingface.co/cgus/diar_streaming_sortformer_4spk-v2-onnx/resolve/main/diar_streaming_sortformer_4spk-v2.onnx', file: 'sortformer.onnx', minSize: 1000000 }
-    ]
+    file: 'sortformer-4spk-v1.q8_0.gguf',
+    minSize: 100 * 1024 * 1024,
+    url: null
   }
 }
 
 /**
- * Ensures a non-TDT model is downloaded and available.
- * @param {string} modelType - 'ctc', 'eou', or 'sortformer'
- * @returns {Promise<string|null>} Path to model directory, or null if type unknown
+ * Ensures a GGUF for the given model type is staged on disk. Returns
+ * the absolute path to the .gguf file (NOT a directory; the GGUF
+ * backend uses single-file models).
+ *
+ * Resolution order:
+ *   1. `QVAC_TEST_GGUF_<TYPE>` env var (e.g. QVAC_TEST_GGUF_TDT)
+ *   2. `QVAC_TEST_GGUF_DIR/<file>` -- copy from a local qvac-parakeet.cpp
+ *      models/ directory if present.
+ *   3. Existing cache in the test models dir.
+ *   4. (TODO) Download from HuggingFace -- not yet wired since GGUFs
+ *      aren't published there; users currently stage them by setting
+ *      QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models.
+ *
+ * @param {string} modelType - 'tdt', 'ctc', 'eou', or 'sortformer'
+ * @param {string} [override] - explicit GGUF path to use
+ * @returns {Promise<string|null>} GGUF file path, or null if unavailable
  */
-async function ensureModelForType (modelType) {
+async function ensureGgufForType (modelType, override = null) {
   const cfg = MODEL_CONFIGS[modelType]
   if (!cfg) return null
 
+  if (override && fs.existsSync(override)) return override
+
+  const envKey = `QVAC_TEST_GGUF_${modelType.toUpperCase()}`
+  if (process.env && process.env[envKey] && fs.existsSync(process.env[envKey])) {
+    return process.env[envKey]
+  }
+
   const { modelsDir } = getTestPaths()
-  const targetPath = path.join(modelsDir, cfg.dirName)
+  const cachePath = path.join(modelsDir, cfg.file)
 
-  const allFilesValid = cfg.files.every(f => {
-    const p = path.join(targetPath, f.file)
-    if (!fs.existsSync(p)) return false
-    return fs.statSync(p).size >= (f.minSize || 0)
-  })
-
-  if (allFilesValid) {
-    console.log(`${modelType.toUpperCase()} model already downloaded`)
-    return targetPath
+  if (fs.existsSync(cachePath) &&
+      fs.statSync(cachePath).size >= (cfg.minSize || 0)) {
+    return cachePath
   }
 
-  console.log(`Downloading ${modelType.toUpperCase()} model from HuggingFace...`)
-  if (!fs.existsSync(targetPath)) {
-    fs.mkdirSync(targetPath, { recursive: true })
-  }
-
-  for (const { url, file, minSize } of cfg.files) {
-    const destPath = path.join(targetPath, file)
-    if (fs.existsSync(destPath)) {
-      const size = fs.statSync(destPath).size
-      if (size >= (minSize || 0)) continue
-      console.log(`  Cached ${file} too small (${size} bytes), re-downloading...`)
-      fs.unlinkSync(destPath)
+  const externalDir = process.env && process.env.QVAC_TEST_GGUF_DIR
+  if (externalDir) {
+    const externalPath = path.join(externalDir, cfg.file)
+    if (fs.existsSync(externalPath) &&
+        fs.statSync(externalPath).size >= (cfg.minSize || 0)) {
+      console.log(`  Staging GGUF from ${externalPath} -> ${cachePath}`)
+      fs.copyFileSync(externalPath, cachePath)
+      return cachePath
     }
-    console.log(`  Downloading ${file}...`)
-    await downloadFile(url, destPath)
   }
 
-  console.log(`${modelType.toUpperCase()} model download complete`)
-  return targetPath
+  if (cfg.url) {
+    console.log(`  Downloading ${cfg.file}...`)
+    await downloadFile(cfg.url, cachePath)
+    return cachePath
+  }
+
+  console.log(`  ${modelType.toUpperCase()} GGUF not available. Set ` +
+              `${envKey} or QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models ` +
+              `to enable this test.`)
+  return null
+}
+
+// Back-compat alias so older test files keep working.
+async function ensureModelForType (modelType) {
+  return ensureGgufForType(modelType)
 }
 
 /**
- * Build the named-paths config properties for a given model type.
- * C++ loads directly from these paths (no JS buffer loading needed).
- * @param {string} modelType - 'tdt', 'ctc', 'eou', or 'sortformer'
- * @param {string} modelDir - absolute path to the model directory
- * @returns {Object} named path config properties to spread into ParakeetInterface config
+ * Resolves a GGUF for the given model type or skips the test cleanly
+ * if no GGUF can be staged. Use as the first line of every integration
+ * test that needs a real model -- it's a no-op when QVAC_TEST_GGUF_DIR
+ * (or QVAC_TEST_GGUF_<TYPE>) is set, and returns a cleanly-skipped
+ * outcome otherwise.
+ *
+ * @param {Object} t - brittle test object (must have `.skip(message)`)
+ * @param {string} [modelType='tdt']
+ * @returns {Promise<string|null>} GGUF path, or null when skipped
  */
-function getNamedPathsConfig (modelType, modelDir) {
-  switch (modelType) {
-    case 'ctc':
-      return {
-        ctcModelPath: path.join(modelDir, 'model.onnx'),
-        ctcModelDataPath: path.join(modelDir, 'model.onnx_data'),
-        tokenizerPath: path.join(modelDir, 'tokenizer.json')
-      }
-    case 'eou':
-      return {
-        eouEncoderPath: path.join(modelDir, 'encoder.onnx'),
-        eouDecoderPath: path.join(modelDir, 'decoder_joint.onnx'),
-        tokenizerPath: path.join(modelDir, 'tokenizer.json')
-      }
-    case 'sortformer':
-      return {
-        sortformerPath: path.join(modelDir, 'sortformer.onnx')
-      }
-    case 'tdt':
-    default:
-      return {
-        encoderPath: path.join(modelDir, 'encoder-model.onnx'),
-        encoderDataPath: path.join(modelDir, 'encoder-model.onnx.data'),
-        decoderPath: path.join(modelDir, 'decoder_joint-model.onnx'),
-        vocabPath: path.join(modelDir, 'vocab.txt'),
-        preprocessorPath: path.join(modelDir, 'preprocessor.onnx')
-      }
+async function loadGgufOrSkip (t, modelType = 'tdt') {
+  const ggufPath = await ensureGgufForType(modelType)
+  if (!ggufPath || !fs.existsSync(ggufPath)) {
+    t.skip(`No ${modelType.toUpperCase()} GGUF available; ` +
+           `set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models or ` +
+           `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf`)
+    return null
   }
+  return ggufPath
+}
+
+/**
+ * Build the file-path config for a given model type. The GGUF
+ * backend takes a single `modelPath` (the .gguf file); this
+ * helper returns that shape so callers don't need to special-case
+ * per model type.
+ *
+ * @param {string} _modelType - 'tdt', 'ctc', 'eou', or 'sortformer' (informational)
+ * @param {string} ggufPath - absolute path to the .gguf file
+ * @returns {Object} { modelPath } config to spread into ParakeetInterface config
+ */
+function getNamedPathsConfig (_modelType, ggufPath) {
+  return { modelPath: ggufPath }
 }
 
 module.exports = {
@@ -739,6 +735,8 @@ module.exports = {
   validateAccuracy,
   ensureModel,
   ensureModelForType,
+  ensureGgufForType,
+  loadGgufOrSkip,
   readFileChunked,
   getNamedPathsConfig,
   isMobile,

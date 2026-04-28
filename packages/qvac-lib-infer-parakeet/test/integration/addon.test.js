@@ -28,20 +28,17 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
   console.log(` Platform: ${platform}`)
   console.log(` Model path: ${modelPath}`)
 
-  // Ensure model is downloaded (downloads if not present)
-  await ensureModel(modelPath)
-
-  const requiredFiles = [
-    'encoder-model.onnx',
-    'decoder_joint-model.onnx',
-    'vocab.txt',
-    'preprocessor.onnx'
-  ]
-
-  for (const file of requiredFiles) {
-    const filePath = path.join(modelPath, file)
-    t.ok(fs.existsSync(filePath), `Required file exists: ${file}`)
+  // The GGUF backend uses a single self-contained `.gguf`
+  // per checkpoint. `ensureModel` returns the staged GGUF path; if no
+  // GGUF can be located (HuggingFace mirror missing + no
+  // QVAC_TEST_GGUF_DIR override) the test skips cleanly so CI doesn't
+  // spuriously fail in environments without local GGUFs.
+  const stagedGguf = await ensureModel(modelPath)
+  if (!stagedGguf || !fs.existsSync(stagedGguf)) {
+    t.skip('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
+    return
   }
+  t.ok(fs.existsSync(stagedGguf), `GGUF exists at ${stagedGguf}`)
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -54,15 +51,18 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
   // Expected transcription (Alice in Wonderland excerpt)
   const expectedText = 'Alice was beginning to get very tired of sitting by her sister on the bank and of having nothing to do. Once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it. And what is the use of a book thought Alice without pictures or conversations'
 
-  // Configuration
+  // Configuration. The GGUF backend takes a single `modelPath`
+  // (the .gguf file); `getNamedPathsConfig` returns just that, so we
+  // could drop it -- kept for back-compat with any future test that
+  // wants to swap implementations via the helper.
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   // Track transcription results
@@ -168,7 +168,11 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
 test('Cancel active job keeps model usable for next job', { timeout: 600000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
 
-  await ensureModel(modelPath)
+  const stagedGguf = await ensureModel(modelPath)
+  if (!stagedGguf || !fs.existsSync(stagedGguf)) {
+    t.skip('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
+    return
+  }
 
   const samplePath = path.join(samplesDir, 'sample.raw')
   if (!fs.existsSync(samplePath)) {
@@ -178,13 +182,13 @@ test('Cancel active job keeps model usable for next job', { timeout: 600000 }, a
   }
 
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   const outputsByJob = new Map()

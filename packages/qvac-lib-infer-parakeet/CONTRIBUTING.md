@@ -82,13 +82,13 @@ Thank you for your interest in contributing! This document provides guidelines f
 ### Documentation
 
 - **Update README.md** for user-facing changes
-- **Update DEVELOPMENT.md** for developer-facing changes
+- **Update README.md / QUICKSTART.md** for developer-facing changes
 - **Add JSDoc comments** for JavaScript APIs
 - **Add Doxygen comments** for C++ APIs
 
 ## Development Setup
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed setup instructions.
+See [README.md](README.md#development) for setup + tests.
 
 Quick setup:
 

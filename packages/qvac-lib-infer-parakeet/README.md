@@ -1,449 +1,378 @@
 # qvac-lib-infer-parakeet
 
-**Technology Stack:** C++20, CMake, vcpkg, Bare Runtime, ONNX Runtime  
+**Technology Stack:** C++20, CMake, vcpkg, Bare Runtime, ggml (parakeet-cpp)
 **Package Type:** Native Bare addon
 
-A high-performance speech-to-text (STT) inference addon for the Bare runtime using NVIDIA's Parakeet ASR models. This addon provides fast, accurate transcription with support for multiple languages, speaker diarization, and streaming audio processing via ONNX Runtime.
+A high-performance speech-to-text addon for the Bare runtime using NVIDIA's
+Parakeet ASR family. The inference engine is a pure-ggml backend sourced
+from [`qvac-parakeet.cpp`](https://github.com/GustavoA1604/qvac-parakeet.cpp)
+via its `parakeet-cpp` vcpkg overlay port -- no onnxruntime, no Python at
+runtime, single self-contained `.gguf` per model.
 
 ## Key Features
 
-- **Fast Speech-to-Text** - Powered by NVIDIA's Parakeet ASR models via ONNX Runtime
-- **Multilingual Support** - Supports ~25 languages with automatic language detection (TDT model)
-- **Streaming Audio Processing** - Real-time transcription with end-of-utterance detection
-- **Speaker Diarization** - Optional speaker identification using Sortformer models
-- **Multiple Model Variants**:
-  - **CTC** - English-only, fast transcription with punctuation/capitalization
-  - **TDT** - Multilingual support (~25 languages) with auto-detection
-  - **EOU** - Real-time streaming with end-of-utterance detection
-  - **Sortformer** - Streaming speaker diarization (up to 4 speakers)
-- **Cross-Platform** - CPU/GPU acceleration on macOS, Linux, Windows, iOS, and Android
-- **Job Cancellation** - Cancel long-running transcription jobs
-- **Bare Runtime Integration** - Async processing without blocking JavaScript event loop
-
-## Model Information
-
-This addon uses NVIDIA's Parakeet ASR models in ONNX format:
-
-- **CTC Model (English-only)**: [parakeet-ctc-0.6b-ONNX](https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/tree/main/onnx)
-- **TDT Model (Multilingual)**: [parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)
-- **EOU Model (Streaming)**: [parakeet-rs realtime_eou_120m-v1-onnx](https://huggingface.co/altunene/parakeet-rs/tree/main/realtime_eou_120m-v1-onnx)
-- **Sortformer Model (Diarization)**: [parakeet-rs sortformer models](https://huggingface.co/altunene/parakeet-rs/tree/main)
-
-**License**: CC-BY-4.0 by NVIDIA
+- **Single-file GGUF models** -- one `.gguf` per checkpoint, statically
+  linked into the addon binary alongside ggml. No `model.onnx_data`
+  side-loads, no `tokenizer.json`/`vocab.txt` shimming -- the GGUF
+  carries the tokenizer and all hyperparameters.
+- **Four engines, one binding**:
+  - **CTC** (English, fast)
+  - **TDT** (~25 languages with PnC, recommended default)
+  - **EOU** (real-time streaming; emits `<EOU>` end-of-utterance token)
+  - **Sortformer** (4-speaker diarization)
+- **GPU acceleration via ggml backends** (Metal on macOS/iOS, Vulkan on
+  Linux/Windows/Android, CUDA opt-in). The `parakeet-cpp` port handles
+  backend selection at install time; runtime falls back to CPU if the
+  selected backend doesn't initialise.
+- **Quantised by default** -- recommended GGUFs ship at q8_0 (~1.9× smaller
+  than f16, no user-visible transcript regression). q4_0 also available.
+- **Job cancellation, async output stream, Bare-runtime-native**
+  -- inherited from `qvac-lib-inference-addon-cpp`.
 
 ## Built With
 
-This addon is built on [qvac-lib-inference-addon-cpp](https://github.com/tetherto/qvac-lib-inference-addon-cpp), which provides the foundational framework for QVAC inference addons.
+- [`qvac-lib-inference-addon-cpp`](https://github.com/tetherto/qvac-lib-inference-addon-cpp)
+  -- the QVAC addon framework (job runner, output callbacks, lifecycle).
+- [`parakeet-cpp`](https://github.com/GustavoA1604/qvac-parakeet.cpp) --
+  pure C++/ggml inference engine (FastConformer encoder + CTC/TDT/EOU/
+  Sortformer decoders + the Phase 13 cross-engine StreamEvent API).
+- [`ggml`](https://github.com/GustavoA1604/qvac-ext-ggml) -- pinned to
+  upstream `ggml-org/ggml@58c38058` via the bundled-ggml branch on the
+  Gustavo fork (no chatterbox patches).
 
 ## Table of Contents
 
 - [Installation](#installation)
-- [Examples](#examples)
 - [Model Setup](#model-setup)
-- [Benchmark Results](#benchmark-results)
+- [Examples](#examples)
 - [JavaScript API](#javascript-api)
 - [Model Variants](#model-variants)
 - [Development](#development)
 - [Supported Platforms](#supported-platforms)
-- [Resources](#resources)  
 - [License](#license)
 
 ## Installation
 
 ### Prerequisites
 
-- **Bare Runtime**: Install from [holepunchto/bare](https://github.com/holepunchto/bare)
-- **Node.js/npm**: For installing dependencies
-- **vcpkg**: For C++ dependency management (will be handled automatically by cmake-vcpkg)
-- **C++ Compiler**: C++20 support required
+- **Bare Runtime** -- install from
+  [holepunchto/bare](https://github.com/holepunchto/bare).
+- **Node.js / npm** (>= 18) for dependency install.
+- **vcpkg** -- pulled in transparently by `cmake-vcpkg` during `npm install`.
+- **C++ compiler** with C++20 support
   - macOS: Xcode Command Line Tools
   - Linux: Clang/LLVM 19 with libc++
-  - Windows: Visual Studio 2022 with C++ workload
+  - Windows: Visual Studio 2022 + C++ workload
 
-### Linux Build Prerequisites
-
-Before building on Linux, install Clang and the required C++ standard library headers:
+### Linux build prerequisites
 
 ```bash
 sudo apt install clang libc++-dev libc++abi-dev build-essential pkg-config
 ```
 
-### Build from Source
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/tetherto/qvac.git
-   cd qvac/packages/qvac-lib-infer-parakeet
-   ```
-
-2. **Install npm dependencies** (includes cmake-bare and cmake-vcpkg):
-   ```bash
-   npm install
-   ```
-   
-   This will automatically:
-   - Install cmake-bare and cmake-vcpkg
-   - Run bare-make to build the addon
-   - Download and build ONNX Runtime via vcpkg
-   - Create the addon in `prebuilds/` directory
-
-3. **Or build manually:**
-   ```bash
-   npm run build
-   ```
-
-## Examples
-
-The `examples/` folder contains ready-to-run scripts demonstrating different use cases.
-
-### Quickstart
-
-**[quickstart.js](./examples/quickstart.js)** - Basic transcription of a WAV file using the TDT model. Start here to understand the core workflow: create instance, load weights, activate, transcribe, cleanup.
+### Build from source
 
 ```bash
-bare examples/quickstart.js
+git clone https://github.com/tetherto/qvac.git
+cd qvac/packages/qvac-lib-infer-parakeet
+npm install
 ```
 
-### Multilingual Transcription
+`npm install` runs `bare-make generate && bare-make build && bare-make
+install` for you. The `parakeet-cpp` overlay port (which bundles ggml at
+the pinned upstream commit) installs into the local vcpkg root and the
+addon binary lands in `prebuilds/<platform>-<arch>/`.
 
-**[transcribe.js](./examples/transcribe.js)** - Transcribe audio files in any supported language. Supports both WAV and raw PCM formats with automatic language detection.
+To rebuild after pulling changes:
 
 ```bash
-# Transcribe Spanish audio
-bare examples/transcribe.js --file examples/samples/LastQuestion_long_ES.raw
-
-# Transcribe French audio
-bare examples/transcribe.js --file examples/samples/French.raw
-
-# Transcribe Croatian audio with INT8 model
-bare examples/transcribe.js -f examples/samples/croatian.raw -m models/parakeet-tdt-0.6b-v3-onnx-int8-full
-
-# Transcribe English WAV file
-bare examples/transcribe.js --file examples/samples/sample-16k.wav
+npm run build
 ```
-
-### CTC Transcription (English-only)
-
-**[quickstart-ctc.js](./examples/quickstart-ctc.js)** - Fast English-only transcription using the CTC model. Includes punctuation and capitalization. Best for single-language, high-throughput use cases.
-
-```bash
-bare examples/quickstart-ctc.js
-```
-
-### Streaming with End-of-Utterance Detection
-
-**[quickstart-eou.js](./examples/quickstart-eou.js)** - Real-time streaming transcription using the EOU model (120M params). Automatically detects utterance boundaries for turn-by-turn output. Note: the EOU model is optimized for low latency over accuracy — expect lower transcription quality compared to TDT/CTC.
-
-```bash
-bare examples/quickstart-eou.js
-```
-
-### Speaker Diarization
-
-**[quickstart-sortformer.js](./examples/quickstart-sortformer.js)** - Identifies who is speaking when using the Sortformer model (up to 4 speakers). Outputs speaker-labeled time segments.
-
-```bash
-bare examples/quickstart-sortformer.js
-```
-
-### Diarized Transcription
-
-**[quickstart-diarized.js](./examples/quickstart-diarized.js)** - Combines TDT transcription with Sortformer diarization to produce speaker-attributed text. Runs both models in parallel and merges the results. Diarization accuracy depends on audio quality and speaker overlap — some boundary imprecision is expected.
-
-```bash
-bare examples/quickstart-diarized.js
-```
-
-### Audio Decoding
-
-**[example.decoder.js](./examples/example.decoder.js)** - Demonstrates using `@qvac/decoder-audio` to decode audio files before transcription. Useful when working with compressed audio formats.
 
 ## Model Setup
 
-### Downloading Models
+The ggml backend takes a single `.gguf` per checkpoint.
+Standard flow: download the upstream NeMo `.nemo` archive from
+HuggingFace, then convert it locally with the `qvac-parakeet.cpp`
+converter.
 
-Download models from HuggingFace using the provided script:
+### One-shot setup (recommended)
 
 ```bash
-./scripts/download-models.sh
+npm run setup-models             # downloads + converts all 4 models, q8_0
+npm run setup-models -- -t tdt   # just TDT
 ```
 
-The interactive script lets you choose which model variant to download (TDT, CTC, EOU, Sortformer, or all).
+`setup-models` runs `download-models.sh && convert-nemo.sh` end to end.
+Output GGUFs land in `./models/`.
 
-**Model Variants:**
-| Variant | Size | Path | Notes |
-|---------|------|------|-------|
-| INT8 (default) | ~650 MB | `models/parakeet-tdt-0.6b-v3-onnx-int8/` | Recommended, 73% smaller, Conv+MatMul quantized |
-| INT8 partial | ~890 MB | `models/parakeet-tdt-0.6b-v3-onnx-int8-partial/` | MatMul-only quantized |
-| FP32 | ~2.4 GB | `models/parakeet-tdt-0.6b-v3-onnx/` | Full precision |
+### Step by step
 
-Models will be saved to the `models/` directory.
+```bash
+npm run download-models                      # all four .nemo archives
+npm run download-models -- -t eou            # just EOU
+npm run convert-models                       # all q8_0
+npm run convert-models -- -t tdt -q q4_0     # TDT q4_0 only
+```
 
-### Supported Languages (TDT Model)
+Both scripts are flag-driven:
 
-The TDT model supports approximately 25 languages with automatic detection:
-- English (en), Spanish (es), French (fr), German (de), Italian (it)
-- Portuguese (pt), Russian (ru), Chinese (zh), Japanese (ja), Korean (ko)
-- Arabic (ar), Hindi (hi), Turkish (tr), Polish (pl), Dutch (nl)
-- And more...
+```
+download-models.sh [--type ctc|tdt|eou|sortformer|all]
+                   [--output <dir>] [--force] [--help]
+convert-nemo.sh    [--type ctc|tdt|eou|sortformer|all]
+                   [--quant f16|q8_0|q5_0|q4_0|f32]
+                   [--parakeet-cpp <path>] [--python <bin>]
+                   [--nemo-dir <dir>] [--output <dir>] [--force] [--help]
+```
 
-Set `language: 'auto'` for automatic detection or specify the language code explicitly.
+### Conversion prerequisites
 
-## Benchmark Results
+`convert-nemo.sh` calls into qvac-parakeet.cpp's
+`scripts/convert-nemo-to-gguf.py`, which needs Python with NeMo +
+`gguf` + numpy + torch. The script auto-detects
+`qvac-parakeet.cpp/venv/bin/python` if a sibling
+`~/dev/qvac-parakeet.cpp` checkout exists; otherwise pass `--python
+/path/to/your/venv/bin/python` or set `PYTHON=...`.
 
-The following benchmarks were run using the **parakeet-tdt-0.6b-v3-onnx** model with 100 samples per language on CPU (4 threads).
+A pre-flight import check fails fast with a clear list of missing
+modules instead of letting `python` crash mid-conversion.
 
-### Word Error Rate (WER) by Language
+### Source repositories
 
-| Language | Dataset | WER (%) | CER (%) | Quality |
-|----------|---------|---------|---------|---------|
-| English | LibriSpeech (clean) | **7.51** | 6.61 | Excellent |
-| French | Multilingual LibriSpeech | 22.35 | 19.31 | Adequate |
-| Spanish | Multilingual LibriSpeech | 27.34 | 25.93 | Adequate |
-| Russian | FLEURS | 30.97 | 28.81 | Adequate |
-| Italian | Multilingual LibriSpeech | 31.39 | 24.71 | Low |
-| Portuguese | Multilingual LibriSpeech | 31.24 | 29.48 | Low |
-| Czech | FLEURS | 35.39 | 30.18 | Low |
-| German | Multilingual LibriSpeech | 40.99 | 38.83 | Low |
+| Model | HuggingFace `.nemo` |
+|-------|-----------------------------------|
+| CTC | [`nvidia/parakeet-ctc-0.6b`](https://huggingface.co/nvidia/parakeet-ctc-0.6b) |
+| TDT | [`nvidia/parakeet-tdt-0.6b-v3`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
+| EOU | [`nvidia/parakeet_realtime_eou_120m-v1`](https://huggingface.co/nvidia/parakeet_realtime_eou_120m-v1) |
+| Sortformer | [`nvidia/diar_sortformer_4spk-v1`](https://huggingface.co/nvidia/diar_sortformer_4spk-v1) |
 
-### Quality Interpretation
+NVIDIA Open Model License -- see each repo's model card for terms.
 
-| WER Range | Quality | Description |
-|-----------|---------|-------------|
-| 0–5% | Excellent | Near human-parity transcription |
-| 5–15% | High | Minor word errors, highly usable |
-| 15–30% | Adequate | Understandable but noticeable mistakes |
-| >30% | Low | Transcript may need significant correction |
+## Examples
 
-### Notes
+After `npm install` + `npm run setup-models`, five example scripts
+cover every supported workflow. All examples are minimal -- only the
+required model and audio paths plus an `--accumulate` flag on the
+live-mic ones. Type, threads, GPU, capture command, log level, etc.
+are picked sensibly by default; tweak them by editing the example if
+needed.
 
-- **English** is the primary language the model was trained on, hence the best performance
-- Performance on non-English languages varies based on training data representation
-- GPU acceleration typically improves both speed and accuracy
-- INT8 quantized models provide similar accuracy with faster inference
+> If you prefer `npm run example:* -- ...` over calling `bare`
+> directly, remember the `--` separator: `npm run example:mic --
+> --model models/parakeet-eou-120m-v1.q8_0.gguf`. Without it, npm
+> interprets `--model` as its own config flag.
 
-For detailed benchmark methodology and raw results, see the [benchmarks/](./benchmarks/) directory.
+### Transcribe / diarize a single file
+
+```bash
+bare examples/transcribe.js \
+     --model models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --audio examples/samples/sample-16k.wav
+```
+
+Same script handles all four engines (CTC, TDT, EOU, Sortformer);
+the binding reads `parakeet.model.type` from the GGUF metadata and
+routes to the right pipeline.
+
+### Diarized transcription ("who said what")
+
+```bash
+bare examples/diarized-transcribe.js \
+     --asr-model  models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --diar-model models/sortformer-4spk-v1.q8_0.gguf \
+     --audio      examples/samples/two-speakers-16k.wav
+```
+
+Runs Sortformer to find speaker time-segments, then transcribes each
+slice with the ASR engine and emits a `Speaker N: ...` per-segment
+transcript.
+
+### Live microphone (transcription)
+
+```bash
+bare examples/live-mic.js --model models/parakeet-tdt-0.6b-v3.q8_0.gguf
+bare examples/live-mic.js --model models/parakeet-eou-120m-v1.q8_0.gguf --accumulate
+```
+
+Captures the default input device via `sox -d` (install: `brew
+install sox` / `apt install sox` / `choco install sox`) and streams
+2-second chunks into the binding's streaming session. With
+`--accumulate`, transcripts are appended onto one line per turn and
+flushed on silence or shutdown -- matches the C++ live-mic example
+in [qvac-parakeet.cpp](https://github.com/GustavoA1604/qvac-parakeet.cpp).
+Press Ctrl-C to flush and exit.
+
+### Live microphone + diarization
+
+```bash
+bare examples/live-mic-diarized.js \
+     --asr-model  models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --diar-model models/sortformer-4spk-v1.q8_0.gguf
+bare examples/live-mic-diarized.js \
+     --asr-model  models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --diar-model models/sortformer-4spk-v1.q8_0.gguf \
+     --accumulate
+```
+
+Same capture loop as `live-mic.js`, with a Sortformer
+`SortformerStreamSession` running in parallel for stable speaker IDs
+across chunks (the session's internal rolling-history window keeps
+the 4-speaker permutation consistent across calls). Each printed
+line is tagged with the dominant speaker for that chunk.
+
+### Audio decoding
+
+```bash
+bare examples/decode-audio.js
+```
+
+Demonstrates `@qvac/decoder-audio` to decode arbitrary audio formats
+(MP3, M4A, OGG, ...) into the s16le PCM the Parakeet engine consumes.
+Useful as a pre-step for non-WAV inputs.
 
 ## JavaScript API
 
-### Core Methods
+The high-level wrapper lives in `parakeet.js`; the addon binding
+itself is in `binding.js`. Both expose the same shape they did
+under the legacy onnxruntime backend, so existing consumers don't
+need code changes -- just a model-path swap (`.gguf` instead of an
+ONNX directory).
 
-#### `createInstance(config, outputCallback)`
-Creates a new Parakeet instance.
+### Quick wiring
 
-**Parameters:**
-- `config` (Object):
-  - `modelPath` (string): Path to model directory
-  - `modelType` (string): 'ctc', 'tdt', 'eou', or 'sortformer'
-  - `config` (Object):
-    - `language` (string): Language code or 'auto'
-    - `maxThreads` (number): Maximum CPU threads to use
-    - `useGPU` (boolean): Enable GPU acceleration
-- `outputCallback` (Function): `(handle, event, data, error) => {}`
+```js
+const binding = require('@qvac/transcription-parakeet/binding')
+const { ParakeetInterface } = require('@qvac/transcription-parakeet/parakeet')
 
-**Returns:** Handle (number) for this instance
+const parakeet = new ParakeetInterface(
+  binding,
+  {
+    modelPath: 'models/parakeet-tdt-0.6b-v3.q8_0.gguf',
+    modelType: 'tdt',          // hint; auto-detected from GGUF metadata
+    maxThreads: 4,
+    useGPU:     false
+  },
+  (handle, event, jobId, output, error) => {
+    if (event === 'Output' && output) {
+      for (const seg of output) console.log(seg.text)
+    }
+  }
+)
 
-#### `loadWeights(handle, buffer)`
-Load model weights from buffer.
+await parakeet.loadWeights({
+  filename:  'parakeet-tdt-0.6b-v3.q8_0.gguf',
+  chunk:     ggufBytes,                  // Uint8Array
+  completed: true
+})
+await parakeet.activate()
 
-**Parameters:**
-- `handle` (number): Instance handle
-- `buffer` (ArrayBuffer): Model file data
+await parakeet.append({ type: 'audio', data: float32AudioBuffer })
+await parakeet.append({ type: 'end of job' })
+// ... wait for the JobEnded event ...
+await parakeet.destroyInstance()
+```
 
-#### `activate(handle)`
-Activate the model after loading weights.
+The `examples/utils.js` helper module wraps the `loadWeights`
+streaming + the `Output`/`JobEnded` race resolution; see
+`examples/transcribe.js` for the recommended template.
 
-**Parameters:**
-- `handle` (number): Instance handle
+### Output events
 
-#### `runJob(handle, input)`
-Run transcription job.
+| Event       | Payload                                                        |
+|-------------|----------------------------------------------------------------|
+| `Output`    | `Array<Transcript>` -- `{ text, start, end, toAppend, id }` per segment |
+| `JobEnded`  | nothing -- the job finished cleanly                            |
+| `Error`     | error string -- non-fatal failure surfaced to JS               |
 
-**Parameters:**
-- `handle` (number): Instance handle
-- `input` (Object):
-  - `type` (string): 'audio'
-  - `data` (ArrayBuffer): Audio data
-  - `sampleRate` (number): Sample rate (e.g., 16000)
-  - `channels` (number): Number of audio channels
-
-#### `cancelJob(handle)`
-Cancel the current running job.
-
-#### `destroyInstance(handle)`
-Destroy the instance and free resources.
-
-### Output Callback Events
-
-The output callback receives these events:
-
-- **`transcription`**: Partial or complete transcription result
-  - `data.text` (string): Transcribed text
-  - `data.confidence` (number): Confidence score (0-1)
-  - `data.isFinal` (boolean): Whether this is the final result
-  
-- **`progress`**: Processing progress update
-  - `data.percent` (number): Progress percentage (0-100)
-  - `data.timeElapsed` (number): Elapsed time in ms
-  
-- **`diarization`**: Speaker identification (if using Sortformer)
-  - `data.speakerId` (number): Speaker ID (0-3)
-  - `data.startTime` (number): Start time in seconds
-  - `data.endTime` (number): End time in seconds
-  
-- **`complete`**: Job completed successfully
-  
-- **`error`**: Error occurred
-  - `error` (string): Error message
+Lifecycle states: `loading` -> `listening` -> `processing` -> `listening`
+-> ... -> `idle` (set on `destroyInstance`).
 
 ## Model Variants
 
-### CTC Model
-- **Use case:** Fast English-only transcription
-- **Features:** Punctuation and capitalization
-- **Size:** ~600MB
-- **Download:** [Hugging Face](https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/tree/main/onnx)
+| Variant     | Languages | Decoder                  | Default GGUF size (q8_0) | Notes |
+|-------------|-----------|--------------------------|-------------------------:|-------|
+| **CTC**     | English   | argmax CTC               | ~ 700 MiB                | Fast, no PnC. |
+| **TDT** ⭐  | ~25       | RNN-T greedy + duration  | ~ 715 MiB                | Recommended default; PnC + auto-detect. |
+| **EOU**     | English   | RNN-T greedy + `<EOU>`   | ~ 132 MiB                | Streaming-trained; lower early-utterance accuracy. |
+| **Sortformer** | n/a    | Diarization head         | ~ 141 MiB                | 4-speaker, offline. |
 
-### TDT Model (Recommended)
-- **Use case:** Multilingual transcription (~25 languages)
-- **Features:** Auto language detection, high accuracy
-- **Variants:**
-  - **INT8 full (recommended):** ~650 MB - Conv+MatMul quantized, 73% smaller
-  - **INT8 partial:** ~890 MB - MatMul-only quantized, 63% smaller
-  - **FP32:** ~2.4 GB - Full precision weights
-- **Download:** Use `./scripts/download-models.sh` or [Hugging Face](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)
-
-### EOU Model
-- **Use case:** Real-time streaming with end-of-utterance detection
-- **Features:** Low latency, streaming support
-- **Size:** ~120MB
-- **Download:** [Hugging Face](https://huggingface.co/altunene/parakeet-rs/tree/main/realtime_eou_120m-v1-onnx)
-
-### Sortformer Model
-- **Use case:** Speaker diarization (up to 4 speakers)
-- **Features:** Streaming speaker identification
-- **Versions:** v2, v2.1 (with int8 quantized options)
-- **Download:** [Hugging Face](https://huggingface.co/altunene/parakeet-rs/tree/main)
+Per-tier sizes (`f16` / `q8_0` / `q4_0`) are listed in the
+[`parakeet-cpp` README](https://github.com/GustavoA1604/qvac-parakeet.cpp#supported-checkpoints).
 
 ## Development
 
-### Building from Source
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/tetherto/qvac.git
-   cd qvac/packages/qvac-lib-infer-parakeet
-   ```
-
-2. **Configure with vcpkg:**
-   ```bash
-   cmake -S . -B build \
-     -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-     -DCMAKE_BUILD_TYPE=Release
-   ```
-
-3. **Build:**
-   ```bash
-   cmake --build build --config Release
-   ```
-
-### Running Tests
+### Running tests
 
 ```bash
-# Build with tests enabled
-cmake -S . -B build \
-  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-  -DBUILD_TESTING=ON
-
-cmake --build build
-ctest --test-dir build --output-on-failure
+npm run test:unit                                          # JS unit tests (mocked)
+QVAC_TEST_GGUF_DIR=models npm run test:integration         # JS integration vs. real GGUFs
+npm run test:cpp                                           # gtest C++ suite
 ```
 
-### Project Structure
+The integration suite pulls each model type via
+`QVAC_TEST_GGUF_DIR=<path-with-staged-ggufs>` (or per-model
+overrides like `QVAC_TEST_GGUF_TDT=/full/path.gguf`). Tests skip
+cleanly when no GGUF is available, so CI without local models
+still passes.
+
+### Project structure
 
 ```
 qvac-lib-infer-parakeet/
-├── src/
-│   ├── ParakeetModel.hpp       # Main model implementation
-│   ├── ParakeetModel.cpp       # ONNX Runtime integration
-│   ├── binding.cpp             # Bare addon registration
-│   └── qvac-lib-inference-addon-cpp/  # Base framework (header-only)
-├── models/                     # Downloaded ONNX models (not in git)
-├── tests/                      # C++ tests
-├── examples/                   # JavaScript usage examples
-├── CMakeLists.txt             # Build configuration
-├── vcpkg.json                 # C++ dependencies
-├── package.json               # npm/bare package
-└── README.md
+├── addon/
+│   ├── src/
+│   │   ├── model-interface/parakeet/   # ParakeetModel.{hpp,cpp} -- thin wrapper
+│   │   │                               # over qvac_parakeet::Engine
+│   │   ├── js-interface/               # JSAdapter + binding.cpp
+│   │   └── addon/                      # AddonCpp.hpp glue
+│   └── tests/                          # gtest C++ tests
+├── examples/                           # transcribe.js, diarized-transcribe.js,
+│                                       # live-mic.js, live-mic-diarized.js,
+│                                       # decode-audio.js, utils.js
+├── lib/                                # error / logger helpers
+├── scripts/                            # download-models.sh, convert-nemo.sh, ...
+├── test/
+│   ├── unit/                           # brittle JS unit tests
+│   └── integration/                    # end-to-end JS tests
+├── parakeet.js                         # JS wrapper (state machine + buffering)
+├── index.js                            # TranscriptionParakeet umbrella
+├── binding.js                          # native addon entry point
+├── package.json
+├── vcpkg.json                          # depends on `parakeet-cpp >= 2026-04-28`
+└── vcpkg-configuration.json            # points at GustavoA1604/qvac-registry-vcpkg
 ```
 
 ## Supported Platforms
 
-| Platform | Architecture | Min Version | Status | GPU Support |
-|----------|-------------|-------------|--------|-------------|
-| macOS | arm64, x64 | 14.0+ | ✅ Tier 1 | CoreML |
-| iOS | arm64 | 17.0+ | ✅ Tier 1 | CoreML |
-| Linux | arm64, x64 | Ubuntu-22+ | ✅ Tier 1 | CPU only |
-| Android | arm64 | 12+ | ✅ Tier 1 | NNAPI |
-| Windows | x64 | 10+ | ✅ Tier 1 | DirectML |
+| Platform | Architecture | Status      | GGML backend |
+|----------|--------------|-------------|--------------|
+| macOS    | arm64, x64   | Tier 1      | Metal (default) |
+| iOS      | arm64        | Tier 1      | Metal (default) |
+| Linux    | arm64, x64   | Tier 1      | Vulkan (default) |
+| Android  | arm64        | Tier 1      | OpenCL / Vulkan |
+| Windows  | x64          | Tier 1      | Vulkan (default) |
 
-**Dependencies:**
-- qvac-lib-inference-addon-cpp: C++ addon framework
-- ONNX Runtime: Inference engine
-- Bare Runtime: JavaScript runtime
-- Linux requires Clang/LLVM 19 with libc++
-
-### Hardware Acceleration
-
-ONNX Runtime provides automatic hardware acceleration when `useGPU: true` is set:
-- **macOS/iOS**: CoreML
-- **Windows**: DirectML
-- **Linux**: CPU only (no GPU EP in current prebuilds)
-- **Android**: NNAPI
-
-If the selected GPU provider fails at session creation, inference falls back to CPU automatically.
-
-## Resources
-
-### Documentation
-
-- **Bare Runtime:** https://github.com/holepunchto/bare
-- **ONNX Runtime:** https://onnxruntime.ai/
-- **Parakeet Models:** https://github.com/altunene/parakeet-rs
-- **Base Framework:** https://github.com/tetherto/qvac-lib-inference-addon-cpp
-
-### Model Sources
-
-There are no official ONNX models on huggingface from NVIDIA. These are converted ONNX model files by the open community. 
-
-- **CTC Model:** [onnx-community/parakeet-ctc-0.6b-ONNX](https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX)
-- **TDT Model:** [istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)
-- **EOU Model:** [altunene/parakeet-rs](https://huggingface.co/altunene/parakeet-rs/tree/main/realtime_eou_120m-v1-onnx)
-- **Sortformer:** [altunene/parakeet-rs](https://huggingface.co/altunene/parakeet-rs)
-
-### Related Projects
-
-- [qvac-lib-infer-whispercpp](https://github.com/tetherto/qvac-lib-infer-whispercpp) - Alternative STT using Whisper
-- [qvac-lib-infer-onnx-tts](https://github.com/tetherto/qvac-lib-infer-onnx-tts) - Text-to-speech
-- [qvac-lib-infer-llamacpp-llm](https://github.com/tetherto/qvac-lib-infer-llamacpp-llm) - LLM inference
+GPU backends are selected at port-install time via the
+`parakeet-cpp[metal|vulkan|cuda|opencl]` features. The `parakeet-cpp`
+port bundles ggml at upstream `58c38058` so the binding is ABI-isolated
+from sibling speech-stack ports (`whisper-cpp`, `chatterbox-cpp`,
+`stable-diffusion-cpp`) that use the chatterbox-patched `ggml` overlay.
 
 ## License
 
-This project is licensed under the Apache-2.0 License – see the [LICENSE](LICENSE) file for details.
-
-**Model License:** The Parakeet models are licensed under CC-BY-4.0 by NVIDIA.
-
-## Contributing
-
-Contributions are welcome! Please open an issue or pull request on GitHub.
+This project is licensed under Apache-2.0 -- see [LICENSE](LICENSE) for
+details. Model files are distributed under the **NVIDIA Open Model
+License**; see the upstream HuggingFace cards for the per-checkpoint
+terms.
 
 ## Acknowledgments
 
-- **NVIDIA** for the Parakeet ASR models
-- **Tether** for the QVAC inference framework
-- **ONNX Runtime** team for the inference engine
-- **altunene** for the parakeet-rs project and ONNX conversions
+- **NVIDIA** for the Parakeet ASR + Sortformer model family.
+- **The ggml team** at ggml-org for the inference runtime.
+- **Tether** for the QVAC addon framework.
 
 ---
 
-*For questions or issues, please open an issue on the GitHub repository.*
+*Issues and contributions welcome on the
+[qvac](https://github.com/tetherto/qvac) monorepo.*

@@ -75,6 +75,38 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
     config.seed = seedOpt.value().as<int32_t>(env);
   }
 
+  // Streaming mode (see ParakeetConfig comments). All fields optional;
+  // unspecified values keep ParakeetConfig's defaults.
+  auto streamingOpt =
+      jsObject.getOptionalProperty<js::Boolean>(env, "streaming");
+  if (streamingOpt.has_value()) {
+    config.streaming = streamingOpt.value().as<bool>(env);
+  }
+
+  auto streamingChunkMsOpt =
+      jsObject.getOptionalProperty<js::Number>(env, "streamingChunkMs");
+  if (streamingChunkMsOpt.has_value()) {
+    config.streamingChunkMs = streamingChunkMsOpt.value().as<int32_t>(env);
+  }
+
+  auto streamingHistoryMsOpt =
+      jsObject.getOptionalProperty<js::Number>(env, "streamingHistoryMs");
+  if (streamingHistoryMsOpt.has_value()) {
+    config.streamingHistoryMs = streamingHistoryMsOpt.value().as<int32_t>(env);
+  }
+
+  auto streamingEmitPartialsOpt =
+      jsObject.getOptionalProperty<js::Boolean>(env, "streamingEmitPartials");
+  if (streamingEmitPartialsOpt.has_value()) {
+    config.streamingEmitPartials = streamingEmitPartialsOpt.value().as<bool>(env);
+  }
+
+  auto streamingEnergyVadOpt =
+      jsObject.getOptionalProperty<js::Boolean>(env, "streamingEnergyVad");
+  if (streamingEnergyVadOpt.has_value()) {
+    config.streamingEnergyVad = streamingEnergyVadOpt.value().as<bool>(env);
+  }
+
   auto encoderPathOpt =
       jsObject.getOptionalProperty<js::String>(env, "encoderPath");
   if (encoderPathOpt.has_value()) {

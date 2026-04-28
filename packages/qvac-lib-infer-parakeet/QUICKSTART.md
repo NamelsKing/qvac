@@ -1,113 +1,120 @@
 # Quick Start Guide
 
-Get started with qvac-lib-infer-parakeet in 5 minutes!
+Get the ggml-backend Parakeet binding (sourced from
+[qvac-parakeet.cpp](https://github.com/tetherto/qvac-parakeet.cpp))
+running end-to-end in
+about ten minutes (most of which is downloading + converting the
+upstream NeMo `.nemo` files).
 
-## 1. Build the Addon
+## 1. Build the addon
 
 ```bash
-# Clone the repository
 git clone https://github.com/tetherto/qvac.git
 cd qvac/packages/qvac-lib-infer-parakeet
-
-# Install dependencies and build
-npm install
+npm install            # also runs bare-make to compile the addon
 ```
 
-That's it! `npm install` will automatically build the addon using bare-make.
+`npm install` pulls the `parakeet-cpp` overlay port (which bundles
+ggml at the pinned upstream commit) and produces
+`prebuilds/<platform>-<arch>/qvac__transcription-parakeet.bare`.
 
-## 2. Download a Model
+Linux only: install Clang/LLVM 19 with libc++ first, e.g.
+```bash
+sudo apt install clang libc++-dev libc++abi-dev build-essential pkg-config
+```
+
+## 2. Stage a model
+
+The ggml backend takes a single `.gguf` per checkpoint. The standard
+flow is "download `.nemo` from HuggingFace, convert to `.gguf` via
+`qvac-parakeet.cpp`'s converter":
 
 ```bash
-npm run download-models
+npm run setup-models                   # all 4 models, q8_0 (recommended)
+# or
+npm run setup-models -- -t tdt         # just TDT
+npm run setup-models -- -t eou -q f16  # full-precision EOU
 ```
 
-Choose option 1 (TDT - Multilingual) for best results.
+Output GGUFs land in `./models/`. The conversion step uses
+qvac-parakeet.cpp's Python venv automatically when a sibling
+`~/dev/qvac-parakeet.cpp` checkout is present; otherwise pass
+`--python /path/to/venv/bin/python` (NeMo + `gguf` + numpy + torch
+required).
 
-## 3. Create Your First Transcription
+## 3. Run an example
 
-Create `transcribe.js`:
-
-```javascript
-const parakeet = require('qvac-lib-infer-parakeet')
-
-// Create instance
-const handle = parakeet.createInstance(
-  {
-    modelPath: './models/parakeet-tdt-0.6b-v3-onnx',
-    modelType: 'tdt',
-    config: {
-      language: 'auto',
-      maxThreads: 4,
-      useGPU: false
-    }
-  },
-  (handle, event, data, error) => {
-    if (error) {
-      console.error('Error:', error)
-      return
-    }
-    
-    if (event === 'transcription') {
-      console.log('Result:', data.text)
-    }
-  }
-)
-
-// Load model (simplified - see examples for full version)
-parakeet.activate(handle)
-
-// Transcribe audio
-parakeet.runJob(handle, {
-  type: 'audio',
-  data: audioBuffer,  // Float32Array buffer
-  sampleRate: 16000,
-  channels: 1
-})
-
-// Cleanup
-parakeet.destroyInstance(handle)
-```
-
-## 4. Run
+Examples take a model path (and audio path / `--accumulate`) -- type
+auto-detected, GPU on, threads picked by the engine. Tweak knobs by
+editing the example if needed.
 
 ```bash
-bare transcribe.js
+bare examples/transcribe.js \
+     --model models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --audio examples/samples/sample-16k.wav
+
+bare examples/transcribe.js \
+     --model models/sortformer-4spk-v1.q8_0.gguf \
+     --audio examples/samples/two-speakers-16k.wav
 ```
 
-## Transcribe Other Languages
+If you prefer `npm run example -- ...`, remember the `--` separator
+so npm forwards args to the script.
 
-Use the flexible `transcribe.js` script for multilingual transcription:
+## 4. Combine ASR + diarization
 
 ```bash
-# Transcribe French audio
-bare examples/transcribe.js --file examples/samples/French.raw
-
-# Transcribe Spanish audio  
-bare examples/transcribe.js --file examples/samples/LastQuestion_long_ES.raw
-
-# Use a different model (e.g., INT8 quantized)
-bare examples/transcribe.js -f examples/samples/croatian.raw -m models/parakeet-tdt-0.6b-v3-onnx-int8-full
+bare examples/diarized-transcribe.js \
+     --asr-model  models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --diar-model models/sortformer-4spk-v1.q8_0.gguf \
+     --audio      examples/samples/two-speakers-16k.wav
 ```
 
-## Next Steps
+## 5. Live microphone
 
-- 📖 Read the [full documentation](README.md)
-- 💻 Check out [examples](examples/)
-- 🛠️ See [development guide](DEVELOPMENT.md)
+```bash
+bare examples/live-mic.js --model models/parakeet-eou-120m-v1.q8_0.gguf
+bare examples/live-mic.js --model models/parakeet-eou-120m-v1.q8_0.gguf --accumulate
 
-## Getting Help
+bare examples/live-mic-diarized.js \
+     --asr-model  models/parakeet-tdt-0.6b-v3.q8_0.gguf \
+     --diar-model models/sortformer-4spk-v1.q8_0.gguf --accumulate
+```
+
+Captures the default input device via `sox -d` (install: `brew install sox`,
+`apt install sox`, `choco install sox`). With `--accumulate`,
+transcripts are appended onto one line per turn and flushed on
+silence, speaker change, or Ctrl-C.
+
+## 6. Build your own
+
+The two-script pattern from `examples/transcribe.js` is the
+recommended template -- copy it, swap the GGUF + audio, and tweak
+the per-segment callback. The `examples/utils.js` helpers handle
+the `loadWeights` streaming + `Output`/`JobEnded` race resolution
+so you don't need to. See [README.md](README.md) for the full
+JavaScript API.
+
+## Next steps
+
+- 📖 [Full README](README.md) -- API, model variants, supported platforms.
+- 💻 [examples/](examples/) -- `transcribe.js`, `diarized-transcribe.js`,
+  `live-mic.js`, `live-mic-diarized.js`, `decode-audio.js`, `utils.js`.
+- 🔧 [scripts/](scripts/) -- `download-models.sh`, `convert-nemo.sh`,
+  `trigger-benchmark.sh`.
+
+## Model comparison
+
+| Model        | Languages | Decoder        | GGUF (q8_0) | Best for |
+|--------------|-----------|----------------|------------:|----------|
+| **TDT** ⭐    | ~25       | RNN-T + duration | ~715 MiB    | General-purpose multilingual |
+| **CTC**      | English   | argmax CTC     | ~700 MiB    | Fast English, no PnC |
+| **EOU**      | English   | RNN-T + `<EOU>` | ~132 MiB    | Real-time streaming, end-of-turn |
+| **Sortformer** | n/a     | Diarization head | ~141 MiB    | 4-speaker diarization |
+
+⭐ = recommended default.
+
+## Getting help
 
 - 🐛 [Report issues](https://github.com/tetherto/qvac/issues)
 - 💬 [Discussions](https://github.com/tetherto/qvac/discussions)
-
-## Model Comparison
-
-| Model | Languages | Speed | Use Case |
-|-------|-----------|-------|----------|
-| **TDT** ⭐ | ~25 | Medium | Best accuracy, multilingual |
-| **CTC** | English only | Fast | English transcription |
-| **EOU** | English | Fast | Real-time streaming |
-| **Sortformer** | Any | Medium | Speaker identification |
-
-⭐ = Recommended for most users
-

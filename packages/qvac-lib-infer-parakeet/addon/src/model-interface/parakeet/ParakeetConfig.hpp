@@ -28,6 +28,25 @@ struct ParakeetConfig {
   bool timestampsEnabled = true;
   int seed = -1;
 
+  // ── Streaming mode ──────────────────────────────────────────────────────
+  // When true, the model opens a long-lived qvac_parakeet streaming session
+  // (StreamSession for ASR, SortformerStreamSession for diarization) at
+  // load() time and routes each process() call through feed_pcm_f32(). The
+  // session retains state (KV cache for ASR Mode 3, rolling speaker history
+  // for Sortformer) across appends, so:
+  //   - Sortformer speaker IDs stay stable from chunk to chunk.
+  //   - EOU `<EOU>` boundaries surface as segment markers (and StreamEvents).
+  //   - Optional energy-VAD events fire for CTC/TDT.
+  // Off by default for back-compat with the offline `transcribe_samples` /
+  // `diarize_samples` path. File-based one-shot transcription (one wav ->
+  // one transcript) keeps the offline path; live-mic / push-style consumers
+  // should opt in.
+  bool streaming             = false;
+  int  streamingChunkMs      = 2000;
+  int  streamingHistoryMs    = 30000;   // Sortformer rolling window only
+  bool streamingEmitPartials = true;
+  bool streamingEnergyVad    = false;   // CTC/TDT only; ignored elsewhere
+
   ParakeetConfig() = default;
 
   explicit ParakeetConfig(const std::string& path) : modelPath(path) {}
@@ -47,7 +66,12 @@ struct ParakeetConfig {
            useGPU == other.useGPU && sampleRate == other.sampleRate &&
            channels == other.channels &&
            captionEnabled == other.captionEnabled &&
-           timestampsEnabled == other.timestampsEnabled && seed == other.seed;
+           timestampsEnabled == other.timestampsEnabled && seed == other.seed &&
+           streaming == other.streaming &&
+           streamingChunkMs == other.streamingChunkMs &&
+           streamingHistoryMs == other.streamingHistoryMs &&
+           streamingEmitPartials == other.streamingEmitPartials &&
+           streamingEnergyVad == other.streamingEnergyVad;
   }
 
   bool operator!=(const ParakeetConfig& other) const {

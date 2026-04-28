@@ -9,6 +9,7 @@ const {
   detectPlatform,
   setupJsLogger,
   getTestPaths,
+  loadGgufOrSkip,
   ensureModel,
   getNamedPathsConfig,
   isMobile
@@ -38,7 +39,8 @@ test('Multiple consecutive transcriptions should work without errors', { timeout
   console.log('='.repeat(60) + '\n')
 
   // Ensure model is downloaded
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -50,13 +52,13 @@ test('Multiple consecutive transcriptions should work without errors', { timeout
 
   // Configuration
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   let parakeet = null
@@ -203,7 +205,8 @@ test('Fresh model instance per transcription (app restart simulation)', { timeou
   console.log('='.repeat(60) + '\n')
 
   // Ensure model is downloaded
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -246,13 +249,13 @@ test('Fresh model instance per transcription (app restart simulation)', { timeou
     }
 
     const config = {
-      modelPath,
+      modelPath: stagedGguf,
       modelType: 'tdt',
       maxThreads: 4,
       useGPU: false,
       sampleRate: 16000,
       channels: 1,
-      ...getNamedPathsConfig('tdt', modelPath)
+      ...getNamedPathsConfig('tdt', stagedGguf)
     }
 
     let parakeet = null

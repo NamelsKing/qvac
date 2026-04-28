@@ -19,6 +19,7 @@ const {
   setupJsLogger,
   getTestPaths,
   validateAccuracy,
+  loadGgufOrSkip,
   ensureModel,
   getNamedPathsConfig,
   isMobile
@@ -63,7 +64,7 @@ const LANGUAGE_TESTS = {
 /**
  * Helper function to run transcription for a specific language
  */
-async function runLanguageTest (t, langConfig, loggerBinding) {
+async function runLanguageTest (t, langConfig, loggerBinding, stagedGguf) {
   const samplePath = path.join(samplesDir, langConfig.sampleFile)
 
   // Check if sample exists
@@ -101,13 +102,13 @@ async function runLanguageTest (t, langConfig, loggerBinding) {
 
   // Configuration
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   // Track transcription
@@ -224,10 +225,11 @@ test('Accuracy test - English (primary language)', { timeout: 300000 }, async (t
   console.log('='.repeat(60))
 
   // Ensure model is available
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   try {
-    const result = await runLanguageTest(t, LANGUAGE_TESTS.en, loggerBinding)
+    const result = await runLanguageTest(t, LANGUAGE_TESTS.en, loggerBinding, stagedGguf)
 
     if (result.skipped) {
       t.pass(`English accuracy test skipped (${result.reason})`)
@@ -253,10 +255,11 @@ test('Transcription test - Spanish (non-primary language)', { timeout: 300000 },
   console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   try {
-    const result = await runLanguageTest(t, LANGUAGE_TESTS.es, loggerBinding)
+    const result = await runLanguageTest(t, LANGUAGE_TESTS.es, loggerBinding, stagedGguf)
 
     if (result.skipped) {
       t.pass(`Spanish test skipped (${result.reason})`)
@@ -284,10 +287,11 @@ test('Transcription test - French (non-primary language)', { timeout: 300000 }, 
   console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   try {
-    const result = await runLanguageTest(t, LANGUAGE_TESTS.fr, loggerBinding)
+    const result = await runLanguageTest(t, LANGUAGE_TESTS.fr, loggerBinding, stagedGguf)
 
     if (result.skipped) {
       t.pass(`French test skipped (${result.reason})`)
@@ -314,10 +318,11 @@ test('Transcription test - Croatian (non-primary language)', { timeout: 300000 }
   console.log('Note: Parakeet is English-only, testing graceful handling')
   console.log('='.repeat(60))
 
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   try {
-    const result = await runLanguageTest(t, LANGUAGE_TESTS.hr, loggerBinding)
+    const result = await runLanguageTest(t, LANGUAGE_TESTS.hr, loggerBinding, stagedGguf)
 
     if (result.skipped) {
       t.pass(`Croatian test skipped (${result.reason})`)
@@ -343,12 +348,13 @@ test('Multi-language summary test', { timeout: 900000 }, async (t) => {
   console.log('MULTI-LANGUAGE SUMMARY TEST')
   console.log('='.repeat(60))
 
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   const results = {}
 
   for (const [code, config] of Object.entries(LANGUAGE_TESTS)) {
-    results[code] = await runLanguageTest(t, config, loggerBinding)
+    results[code] = await runLanguageTest(t, config, loggerBinding, stagedGguf)
   }
 
   // Summary

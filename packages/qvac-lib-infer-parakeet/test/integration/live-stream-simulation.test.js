@@ -18,6 +18,7 @@ const {
   detectPlatform,
   setupJsLogger,
   getTestPaths,
+  loadGgufOrSkip,
   ensureModel,
   getNamedPathsConfig,
   isMobile
@@ -80,7 +81,8 @@ test('Live stream simulation: chunked audio feeding', { timeout: 300000 }, async
   console.log('='.repeat(60) + '\n')
 
   // Ensure model is available
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -105,13 +107,13 @@ test('Live stream simulation: chunked audio feeding', { timeout: 300000 }, async
 
   // Configuration
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   // Track results
@@ -236,7 +238,8 @@ test('Rapid chunk feeding: stress test with no delay', { timeout: 300000 }, asyn
   console.log('='.repeat(60) + '\n')
 
   // Ensure model is available
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -256,13 +259,13 @@ test('Rapid chunk feeding: stress test with no delay', { timeout: 300000 }, asyn
 
   // Configuration
   const config = {
-    modelPath,
+    modelPath: stagedGguf,
     modelType: 'tdt',
     maxThreads: 4,
     useGPU: false,
     sampleRate: 16000,
     channels: 1,
-    ...getNamedPathsConfig('tdt', modelPath)
+    ...getNamedPathsConfig('tdt', stagedGguf)
   }
 
   // Track results
@@ -355,7 +358,8 @@ test('Variable chunk sizes: small to large chunks', { timeout: 300000 }, async (
   console.log('='.repeat(60) + '\n')
 
   // Ensure model is available
-  await ensureModel(modelPath)
+  const stagedGguf = await loadGgufOrSkip(t)
+  if (!stagedGguf) return
 
   // Check sample audio exists
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -399,13 +403,13 @@ test('Variable chunk sizes: small to large chunks', { timeout: 300000 }, async (
     }
 
     const config = {
-      modelPath,
+      modelPath: stagedGguf,
       modelType: 'tdt',
       maxThreads: 4,
       useGPU: false,
       sampleRate: 16000,
       channels: 1,
-      ...getNamedPathsConfig('tdt', modelPath)
+      ...getNamedPathsConfig('tdt', stagedGguf)
     }
 
     let parakeet = null

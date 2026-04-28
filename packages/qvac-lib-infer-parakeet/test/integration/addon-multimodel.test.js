@@ -8,7 +8,8 @@ const {
   ParakeetInterface,
   setupJsLogger,
   getTestPaths,
-  ensureModelForType,
+  ensureGgufForType,
+  loadGgufOrSkip,
   getNamedPathsConfig
 } = require('./helpers.js')
 
@@ -29,11 +30,8 @@ test('CTC desktop integration — English transcription', { timeout: 600000 }, a
   let parakeet = null
 
   try {
-    const modelDir = await ensureModelForType('ctc')
-    if (!modelDir) {
-      t.pass('CTC model download not configured — skipping')
-      return
-    }
+    const modelDir = await loadGgufOrSkip(t, 'ctc')
+    if (!modelDir) return
 
     const audio = loadAudioSample()
     if (!audio) {
@@ -92,11 +90,8 @@ test('EOU desktop integration — streaming transcription', { timeout: 600000 },
   let parakeet = null
 
   try {
-    const modelDir = await ensureModelForType('eou')
-    if (!modelDir) {
-      t.pass('EOU model download not configured — skipping')
-      return
-    }
+    const modelDir = await loadGgufOrSkip(t, 'eou')
+    if (!modelDir) return
 
     const audio = loadAudioSample()
     if (!audio) {
@@ -155,11 +150,8 @@ test('Sortformer desktop integration — speaker diarization', { timeout: 600000
   let parakeet = null
 
   try {
-    const modelDir = await ensureModelForType('sortformer')
-    if (!modelDir) {
-      t.pass('Sortformer model download not configured — skipping')
-      return
-    }
+    const modelDir = await loadGgufOrSkip(t, 'sortformer')
+    if (!modelDir) return
 
     const audio = loadAudioSample()
     if (!audio) {

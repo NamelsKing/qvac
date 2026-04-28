@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - ggml backend (qvac-parakeet.cpp)
+
+### Changed (BREAKING for model files)
+- Replaced the onnxruntime backend with a pure C++/ggml engine
+  (`parakeet-cpp` vcpkg overlay port pinned to upstream
+  `GustavoA1604/qvac-parakeet.cpp`). The native addon no longer ships
+  ONNX Runtime; ggml is statically linked at the parakeet-cpp port
+  level (bundled at upstream `ggml-org/ggml@58c38058`).
+- Models now load from a single `.gguf` file per checkpoint instead
+  of the legacy multi-file ONNX layout (`encoder-model.onnx` +
+  `encoder-model.onnx.data` + `decoder_joint-model.onnx` +
+  `vocab.txt` + `preprocessor.onnx`). Tokenizer + hyperparameters
+  travel inside the GGUF metadata; no side-loaded files.
+- `loadWeights({ filename, chunk, completed })` now expects a single
+  `.gguf` filename. Non-`.gguf` filenames are ignored with a warning
+  for back-compat with callers still iterating an ONNX file list.
+- `Engine::transcribe_stream` and `StreamSession` (Mode 2 / Mode 3
+  streaming) are wired through the new backend; existing
+  `is_eou_boundary` + `eot_confidence` slots on `StreamingSegment`
+  now reflect parakeet-cpp's native EOU `<EOU>` token detection.
+- `runtimeStats()` keeps its legacy keys (`totalTime`,
+  `audioDurationMs`, `totalSamples`, ...) plus new GGML-specific
+  ones (`encoderMs`, `decoderMs`, `melSpecMs`, `totalEncodedFrames`).
+
+### Added
+- `parakeet-cpp` Phase 13 cross-engine `StreamEvent` API:
+  `VadStateChanged` / `EndOfTurn` events surfaced via the same
+  binding callback shape consumers already use.
+- Four flag-driven examples replace the old per-model quickstart
+  zoo: `examples/transcribe.js` (any GGUF, all engine types),
+  `examples/diarized-transcribe.js` (combined Sortformer + ASR),
+  `examples/live-mic.js` (default-device live transcription via
+  `sox`/`ffmpeg`/`arecord`), and `examples/live-mic-diarized.js`
+  (live mic with parallel Sortformer + ASR for speaker-tagged
+  transcripts).
+- `scripts/download-models.sh` (downloads upstream NeMo `.nemo`)
+  and `scripts/convert-nemo.sh` (wraps qvac-parakeet.cpp's
+  `convert-nemo-to-gguf.py`); `npm run setup-models` runs both.
+- C++ test surface trimmed to a focused 28-case suite covering the
+  new ParakeetModel wrapper. JS integration suite is now GGUF-aware
+  via `QVAC_TEST_GGUF_DIR=...` env or per-type
+  `QVAC_TEST_GGUF_TDT=/path/to.gguf` overrides.
+
+### Removed
+- `@qvac/onnx` peer dependency; `eigen3`, `qvac-onnx` cmake config,
+  ONNX file-name lists in `examples/utils.js`.
+- `examples/quickstart-{ctc,eou,sortformer,diarized,ggml}.js` and
+  `examples/quickstart.js` (folded into `examples/transcribe.js`).
+- `examples/compare-ggml-vs-onnx.js` (no onnx backend left to
+  compare against).
+- 4 ONNX-specific integration tests (`external-data-staging`,
+  `individual-file-paths`, `named-paths-all-models`,
+  `named-paths-reload`) that exercised concepts the GGUF backend
+  doesn't have.
+- `DEVELOPMENT.md` (folded into the README's Development section).
+
+### Fixed
+- `qvac-parakeet.cpp` upstream: replaced
+  `-std::numeric_limits<float>::infinity()` with `-1e30f` in the
+  EOU chunked-limited attention mask. Apple Clang at `-O3` was
+  emitting `-Wnan-infinity-disabled` and silently miscompiling the
+  mask, which cost the EOU greedy decoder a handful of tokens per
+  utterance. CTC / TDT / Sortformer were unaffected (full attention,
+  no `-inf` in their mask paths). Standalone CLI users running
+  `cmake -DCMAKE_BUILD_TYPE=Release` were hitting the same regression.
+
 ## [0.3.2]
 
 ### Fixed

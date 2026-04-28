@@ -30,10 +30,14 @@ find_path(
   REQUIRED
 )
 
-set(qvac-onnx_DIR "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@qvac/onnx/prebuilds/share/qvac-onnx/cmake")
-find_package(qvac-onnx CONFIG REQUIRED)
+# Backend: the pure-ggml engine sourced from qvac-parakeet.cpp, replacing the
+# legacy onnxruntime stack. The vcpkg `parakeet-cpp` overlay port pulls in ggml as a
+# transitive dep, so a single find_package() handles both. We keep a manual
+# find_package(ggml) below as well so we have the ggml::ggml target available
+# for any direct linker flags we may need (e.g. the static-mobile path).
+find_package(qvac-parakeet-cpp CONFIG REQUIRED)
+find_package(ggml CONFIG REQUIRED)
 
-find_package(Eigen3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -92,39 +96,19 @@ target_include_directories(
 
 target_compile_definitions(${qvac_lib_infer_parakeet} PUBLIC JS_LOGGER)
 
-if((ANDROID OR (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS")) AND NOT MOBILE_DYNAMIC_LINK)
-  target_link_libraries(${LIB_NAME} PRIVATE qvac-onnx::qvac-onnx-static nlohmann_json::nlohmann_json Eigen3::Eigen)
+target_link_libraries(${LIB_NAME} PRIVATE
+    qvac-parakeet::qvac-parakeet
+    ggml::ggml
+    nlohmann_json::nlohmann_json
+)
 
-  target_link_libraries(
-    ${qvac_lib_infer_parakeet}
-    PRIVATE
-      ${LIB_NAME}
-      qvac-onnx::qvac-onnx-static
-  )
-else()
-  target_link_libraries(${LIB_NAME} PRIVATE qvac-onnx::headers nlohmann_json::nlohmann_json Eigen3::Eigen)
-
-  include_bare_module("@qvac/onnx" qvac_onnx_target PREBUILD)
-
-  target_link_libraries(
-    ${qvac_lib_infer_parakeet}
-    PRIVATE
-      ${LIB_NAME}
-      qvac-onnx::headers
-  )
-  target_link_libraries(
-    ${qvac_lib_infer_parakeet}_module
-    PRIVATE
-      ${qvac_onnx_target}_module
-  )
-
-  bare_target(host)
-  bare_module_target("." _unused NAME addon_name)
-  install(FILES $<TARGET_FILE:${qvac_onnx_target}_module>
-    DESTINATION ${host}/${addon_name}
-    RENAME qvac__onnx@0.bare)
-endif()
-
+target_link_libraries(
+  ${qvac_lib_infer_parakeet}
+  PRIVATE
+    ${LIB_NAME}
+    qvac-parakeet::qvac-parakeet
+    ggml::ggml
+)
 if(WIN32)
   target_compile_options(${qvac_lib_infer_parakeet} PRIVATE "/utf-8")
 
@@ -235,21 +219,12 @@ if(BUILD_TESTING)
         ${QVAC_LIB_INFERENCE_ADDON_CPP_INCLUDE_DIRS}
     )
 
-    if(TARGET qvac-onnx::qvac-onnx-static)
-      set(QVAC_TEST_ORT_TARGET qvac-onnx::qvac-onnx-static)
-    elseif(DEFINED qvac_onnx_target)
-      set(QVAC_TEST_ORT_TARGET ${qvac_onnx_target}_module)
-    else()
-      set(QVAC_TEST_ORT_TARGET qvac-onnx::headers)
-    endif()
-
     target_link_libraries(parakeet_tests
       PRIVATE
         GTest::gmock_main
-        qvac-onnx::headers
-        ${QVAC_TEST_ORT_TARGET}
+        qvac-parakeet::qvac-parakeet
+        ggml::ggml
         nlohmann_json::nlohmann_json
-        Eigen3::Eigen
     )
 
     if(ENABLE_COVERAGE)
@@ -266,10 +241,7 @@ if(BUILD_TESTING)
         )
         message(STATUS "LLVM Coverage enabled for parakeet tests")
     endif()
-    set(_onnx_prebuilds "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@qvac/onnx/prebuilds/${PREBUILD_PLATFORM}-${PREBUILD_ARCH}")
-    if(EXISTS "${_onnx_prebuilds}/qvac__onnx.bare" AND NOT EXISTS "${_onnx_prebuilds}/qvac__onnx@0.bare")
-      file(CREATE_LINK "${_onnx_prebuilds}/qvac__onnx.bare" "${_onnx_prebuilds}/qvac__onnx@0.bare" COPY_ON_ERROR)
-    endif()
+
     # CI invokes the test binary directly via npm scripts, so avoid running it
     # during build-time discovery where libc++/coverage combinations have been
     # aborting before the actual test step starts.
