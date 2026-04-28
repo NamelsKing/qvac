@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.25)
 
 option(BUILD_TESTING "Build tests" OFF)
 option(ENABLE_COVERAGE "Enable coverage" OFF)
-option(MOBILE_DYNAMIC_LINK "Use dynamic linking for ONNX Runtime on mobile" ON)
 
 if(BUILD_TESTING)
   list(APPEND VCPKG_MANIFEST_FEATURES "tests")
@@ -30,11 +29,6 @@ find_path(
   REQUIRED
 )
 
-# Backend: the pure-ggml engine sourced from qvac-parakeet.cpp, replacing the
-# legacy onnxruntime stack. The vcpkg `parakeet-cpp` overlay port pulls in ggml as a
-# transitive dep, so a single find_package() handles both. We keep a manual
-# find_package(ggml) below as well so we have the ggml::ggml target available
-# for any direct linker flags we may need (e.g. the static-mobile path).
 find_package(qvac-parakeet-cpp CONFIG REQUIRED)
 find_package(ggml CONFIG REQUIRED)
 
@@ -129,7 +123,7 @@ if(ANDROID)
     message(WARNING "-- llvm-strip not found. Skipping library stripping for Android build.")
   else()
     message("-- llvm-strip found: ${LLVM_STRIP}")
-    set(LIBRARIES_TO_STRIP libonnx.a libprotobuf.a libprotoc.a libflatbuffers.a libprotobuf-lite.a libre2.a)
+    set(LIBRARIES_TO_STRIP libprotobuf.a libprotoc.a libflatbuffers.a libprotobuf-lite.a libre2.a)
 
     set(VCPKG_INSTALLED_DIR "${CMAKE_BINARY_DIR}/_vcpkg/${VCPKG_TARGET_TRIPLET}")
     set(LIBS_DIR_PATH "${VCPKG_INSTALLED_DIR}/lib")
