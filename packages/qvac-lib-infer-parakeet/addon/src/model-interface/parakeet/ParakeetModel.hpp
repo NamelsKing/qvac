@@ -2,7 +2,7 @@
 
 // Pure-ggml backend for the Parakeet binding (sourced from qvac-parakeet.cpp).
 //
-// This class used to host four onnxruntime sessions (preprocessor + encoder
+// This class used to host four ggml sessions (preprocessor + encoder
 // + decoder + ctc/sortformer) plus a hand-rolled mel-spectrogram, CMVN,
 // chunked-limited streaming state machine for EOU, and a Sortformer
 // post-processing pipeline. All of that has been replaced by a single

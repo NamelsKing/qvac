@@ -2,8 +2,6 @@
 
 This library simplifies running NVIDIA Parakeet speech-to-text and Sortformer speaker-diarization inference within QVAC runtime applications. It provides an easy interface to load, execute, and manage Parakeet inference instances, supporting CTC, TDT, EOU, and Sortformer checkpoints from a single binding.
 
-**Note: This library uses the [`qvac-parakeet.cpp`](https://github.com/GustavoA1604/qvac-parakeet.cpp) ggml engine for inference. The previous onnxruntime-based implementation has been replaced.**
-
 ## Table of Contents
 
 - [Supported Platforms](#supported-platforms)
@@ -36,9 +34,7 @@ This library simplifies running NVIDIA Parakeet speech-to-text and Sortformer sp
 
 **Dependencies:**
 - qvac-lib-inference-addon-cpp: C++ addon framework
-- parakeet-cpp (latest): inference engine, sourced from
-  [`qvac-parakeet.cpp`](https://github.com/GustavoA1604/qvac-parakeet.cpp);
-  bundles ggml at the pinned upstream commit
+- parakeet-cpp (latest): inference engine with GGML dependency
 - Bare Runtime (latest): JavaScript runtime
 - Linux requires Clang/LLVM 19 with libc++
 
@@ -118,7 +114,7 @@ brew install cmake git
 
 #### GPU Acceleration (Optional)
 
-GPU backends are selected at vcpkg install time via the `parakeet-cpp[metal|vulkan|cuda|opencl]` features. The bundled ggml inside the `parakeet-cpp` port handles backend wiring; runtime falls back to CPU if the chosen backend doesn't initialise.
+GPU backends are selected at vcpkg install time via the `parakeet-cpp[metal|vulkan|opencl]` features. The bundled ggml inside the `parakeet-cpp` port handles backend wiring; runtime falls back to CPU if the chosen backend doesn't initialise.
 
 - **Metal (macOS/iOS):** automatic; no setup required.
 - **Vulkan (Linux/Windows/Android):** install the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) and ensure GPU drivers support Vulkan 1.1+.
@@ -356,8 +352,6 @@ The live-mic examples capture the default input device via `sox -d` (install: `b
 | **EOU** | English | RNN-T greedy + `<EOU>` | ~ 132 MiB | Streaming-trained; native end-of-turn token. |
 | **Sortformer** | n/a | Diarization head | ~ 141 MiB | 4-speaker. |
 
-Per-tier sizes (`f16` / `q8_0` / `q4_0`) are listed in the [`parakeet-cpp` README](https://github.com/GustavoA1604/qvac-parakeet.cpp#supported-checkpoints).
-
 ## Other examples
 
 - [`examples/transcribe.js`](examples/transcribe.js) -- universal single-file transcribe / diarize (any GGUF, all model types).
@@ -373,13 +367,8 @@ Per-tier sizes (`f16` / `q8_0` / `q4_0`) are listed in the [`parakeet-cpp` READM
 - **GGUF** -- single-file model format used by ggml-based runtimes; carries weights + tokenizer + hyperparameters in one file.
 - **QVAC** -- our open-source AI-SDK for building decentralized AI applications.
 
-## Error Range
-
-All errors from this library are in the range of 24,001 to 25,000.
-
 ## Resources
 
-- [`qvac-parakeet.cpp`](https://github.com/GustavoA1604/qvac-parakeet.cpp) -- the C++/ggml inference engine this binding wraps.
 - [NVIDIA Parakeet model cards](https://huggingface.co/collections/nvidia/parakeet-asr-models-66b50d5a37b9580ee4ba93c2) -- upstream `.nemo` checkpoints.
 
 ## License

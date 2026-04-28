@@ -260,7 +260,7 @@ C++ Dependencies
 --- apache-2.0 (Apache License 2.0) ---
 
   parakeet-cpp
-    https://github.com/GustavoA1604/parakeet.cpp
+    https://github.com/tetherto/qvac-ext-lib-whisper.cpp/tree/main/parakeet-cpp
 
 --- apache-2.0-with-llvm-exception ---
 
