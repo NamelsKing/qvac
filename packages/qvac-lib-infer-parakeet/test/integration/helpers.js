@@ -591,29 +591,43 @@ async function runTranscription (params, expectation = {}) {
 // `QVAC_TEST_GGUF_DIR` env var (typically the package's own
 // `./models/`).
 //
-// Quantisation: we default to q8_0 (1.9x smaller than f16, no
-// user-facing transcript regressions on shipping fixtures). Tests can
-// override per-model with QVAC_TEST_GGUF_<TYPE> (e.g.
+// Quantisation:
+//   - Desktop default is q8_0 (best WER per byte). `file` below.
+//   - Mobile default is q4_0 (~4x smaller than q8 on full models),
+//     bundled into `test/mobile/testAssets/` and extracted to the
+//     app cache at runtime. `mobileFile` below. The size hit on
+//     accuracy is acceptable for integration smoke tests; full WER
+//     gates remain a desktop-only signal.
+// Tests can override per-model with QVAC_TEST_GGUF_<TYPE> (e.g.
 // QVAC_TEST_GGUF_EOU=/path/to/parakeet-eou-120m-v1.f16.gguf).
+//
+// `minSize` is a sanity guard against truncated / zero-byte files
+// only; pick a value small enough to accept the smallest expected
+// quantisation (q4_0). Real correctness is enforced by the GGUF
+// loader rejecting malformed payloads.
 const MODEL_CONFIGS = {
   ctc: {
     file: 'parakeet-ctc-0.6b.q8_0.gguf',
-    minSize: 600 * 1024 * 1024,
+    mobileFile: 'parakeet-ctc-0.6b.q4_0.gguf',
+    minSize: 50 * 1024 * 1024,
     url: null
   },
   tdt: {
     file: 'parakeet-tdt-0.6b-v3.q8_0.gguf',
-    minSize: 600 * 1024 * 1024,
+    mobileFile: 'parakeet-tdt-0.6b-v3.q4_0.gguf',
+    minSize: 50 * 1024 * 1024,
     url: null
   },
   eou: {
     file: 'parakeet-eou-120m-v1.q8_0.gguf',
-    minSize: 100 * 1024 * 1024,
+    mobileFile: 'parakeet-eou-120m-v1.q4_0.gguf',
+    minSize: 50 * 1024 * 1024,
     url: null
   },
   sortformer: {
     file: 'sortformer-4spk-v1.q8_0.gguf',
-    minSize: 100 * 1024 * 1024,
+    mobileFile: 'sortformer-4spk-v1.q4_0.gguf',
+    minSize: 50 * 1024 * 1024,
     url: null
   }
 }
@@ -624,12 +638,18 @@ const MODEL_CONFIGS = {
  * backend uses single-file models).
  *
  * Resolution order:
- *   1. `QVAC_TEST_GGUF_<TYPE>` env var (e.g. QVAC_TEST_GGUF_TDT)
- *   2. `QVAC_TEST_GGUF_DIR/<file>` -- copy from any pre-staged
+ *   1. Explicit `override` argument.
+ *   2. `QVAC_TEST_GGUF_<TYPE>` env var (e.g. QVAC_TEST_GGUF_TDT).
+ *   3. Existing cache in the test models dir (`<modelsDir>/<file>`).
+ *   4. On mobile only: bundled GGUF in the asset cache, preferring
+ *      `<samplesDir>/<mobileFile>` (q4_0) over `<samplesDir>/<file>`
+ *      (q8_0). `samplesDir` resolves to the React-Native cache dir
+ *      where the test framework extracts entries from
+ *      `test/mobile/testAssets/` at app launch.
+ *   5. `QVAC_TEST_GGUF_DIR/<file>` -- copy from any pre-staged
  *      `models/` directory if present (typically the package's own
  *      `./models/` produced by `npm run setup-models`).
- *   3. Existing cache in the test models dir.
- *   4. (TODO) Download from HuggingFace -- not yet wired since GGUFs
+ *   6. (TODO) Download from HuggingFace -- not yet wired since GGUFs
  *      aren't published there; users currently stage them by running
  *      `npm run setup-models` (which writes to ./models/) or by
  *      pointing `QVAC_TEST_GGUF_DIR` at an existing GGUF directory.
@@ -658,10 +678,13 @@ async function ensureGgufForType (modelType, override = null) {
   }
 
   if (isMobile && samplesDir) {
-    const bundledPath = path.join(samplesDir, cfg.file)
-    if (fs.existsSync(bundledPath) &&
-        fs.statSync(bundledPath).size >= (cfg.minSize || 0)) {
-      return bundledPath
+    const candidates = [cfg.mobileFile, cfg.file].filter(Boolean)
+    for (const candidate of candidates) {
+      const bundledPath = path.join(samplesDir, candidate)
+      if (fs.existsSync(bundledPath) &&
+          fs.statSync(bundledPath).size >= (cfg.minSize || 0)) {
+        return bundledPath
+      }
     }
   }
 
