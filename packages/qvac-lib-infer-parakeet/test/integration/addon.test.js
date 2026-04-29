@@ -10,11 +10,11 @@ const {
   setupJsLogger,
   getTestPaths,
   validateAccuracy,
-  ensureModel
+  loadGgufOrSkip
 } = require('./helpers.js')
 
 const platform = detectPlatform()
-const { modelPath, samplesDir } = getTestPaths()
+const { samplesDir } = getTestPaths()
 
 function loadRawAudio (samplePath) {
   const rawBuffer = fs.readFileSync(samplePath)
@@ -45,13 +45,10 @@ test('English transcription and WER verification', { timeout: 300000 }, async (t
   console.log('PARAKEET TRANSCRIPTION TEST')
   console.log('='.repeat(60))
   console.log(` Platform: ${platform}`)
-  console.log(` Model path: ${modelPath}`)
 
-  const stagedGguf = await ensureModel(modelPath)
-  if (!stagedGguf || !fs.existsSync(stagedGguf)) {
-    t.pass('No GGUF available; set QVAC_TEST_GGUF_DIR=~/dev/qvac-parakeet.cpp/models')
-    return
-  }
+  const stagedGguf = await loadGgufOrSkip(t, 'tdt')
+  if (!stagedGguf) return
+  console.log(` Model: ${stagedGguf}`)
   t.ok(fs.existsSync(stagedGguf), `GGUF exists at ${stagedGguf}`)
 
   const samplePath = path.join(samplesDir, 'sample.raw')

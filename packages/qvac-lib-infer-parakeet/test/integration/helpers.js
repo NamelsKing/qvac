@@ -718,26 +718,50 @@ async function ensureModelForType (modelType) {
 }
 
 /**
- * Resolves a GGUF for the given model type or skips the test cleanly
- * if no GGUF can be staged. Use as the first line of every integration
- * test that needs a real model -- it's a no-op when QVAC_TEST_GGUF_DIR
- * (or QVAC_TEST_GGUF_<TYPE>) is set, and returns a cleanly-skipped
- * outcome otherwise.
+ * Resolves a GGUF for the given model type. Use as the first line of
+ * every integration test that needs a real model -- when the GGUF is
+ * available the function returns its path; when it isn't, behaviour is:
  *
- * @param {Object} t - brittle test object (must have `.skip(message)`)
+ *   - Mobile + ctc: skip-as-pass. We intentionally do not bundle CTC
+ *     into the mobile test app (redundant with TDT for transcription
+ *     tests; see helpers.js MODEL_CONFIGS and the
+ *     integration-mobile-test-qvac-lib-infer-parakeet workflow).
+ *     Letting this one case stay as `t.pass` keeps the multi-model
+ *     test green on mobile while still actually exercising
+ *     TDT / EOU / Sortformer there.
+ *   - Everything else: hard fail via `t.fail`. A missing model means
+ *     `npm run setup-models` did not run, the cache restore was
+ *     corrupt, or the test framework copy-step never landed the GGUF
+ *     in test/mobile/testAssets. All three are real bugs we want to
+ *     surface, not silently mask with a "test skipped, all green"
+ *     outcome.
+ *
+ * @param {Object} t - brittle test object (must have `.fail(message)` /
+ *                     `.pass(message)`)
  * @param {string} [modelType='tdt']
- * @returns {Promise<string|null>} GGUF path, or null when skipped
+ * @returns {Promise<string|null>} GGUF path on success, or `null` on
+ *   miss (in which case the function has already recorded
+ *   `t.pass` / `t.fail` and the caller should `return` early).
  */
 async function loadGgufOrSkip (t, modelType = 'tdt') {
   const ggufPath = await ensureGgufForType(modelType)
-  if (!ggufPath || !fs.existsSync(ggufPath)) {
-    t.pass(`No ${modelType.toUpperCase()} GGUF available; run ` +
-           '`npm run setup-models` (or set ' +
-           `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf, ` +
-           'or QVAC_TEST_GGUF_DIR=/path/to/models)')
+  if (ggufPath && fs.existsSync(ggufPath)) {
+    return ggufPath
+  }
+
+  const remediation = `Run \`npm run setup-models\` (or set ` +
+    `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf ` +
+    'or QVAC_TEST_GGUF_DIR=/path/to/models). For mobile, the model ' +
+    'must be staged into test/mobile/testAssets/ before the test app ' +
+    'is built.'
+
+  if (isMobile && modelType === 'ctc') {
+    t.pass(`No CTC GGUF bundled on mobile (intentional). ${remediation}`)
     return null
   }
-  return ggufPath
+
+  t.fail(`No ${modelType.toUpperCase()} GGUF available. ${remediation}`)
+  return null
 }
 
 /**
