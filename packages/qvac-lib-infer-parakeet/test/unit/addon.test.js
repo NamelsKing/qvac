@@ -6,7 +6,7 @@ const MockedBinding = require('../mocks/MockedBinding.js')
 const { transitionCb, wait } = require('../mocks/utils.js')
 const { ParakeetInterface } = require('../../parakeet')
 
-const process = require('process')
+const process = require('bare-process')
 global.process = process
 const sinon = require('sinon')
 
