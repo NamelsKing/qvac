@@ -11,12 +11,13 @@
     {
       "name": "parakeet-cpp",
       "version>=": "2026-04-30",
-      "features": ["opencl"],
+      "features": ["vulkan", "opencl"],
       "platform": "android"
     },
     {
       "name": "parakeet-cpp",
       "version>=": "2026-04-30",
+      "features": ["vulkan"],
       "platform": "!(osx | ios | android)"
     },
     {

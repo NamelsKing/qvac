@@ -5,11 +5,11 @@
 // Today every other integration test sets `useGPU: false`, so the
 // integration matrix only exercises the CPU fallback path on real
 // devices. This file flips the switch with `useGPU: true` so that on
-//   - macOS / iOS:  Metal is engaged
-//   - Android:      OpenCL is engaged (Adreno only; non-Adreno phones
-//                   will silently fall back to CPU at ggml_cl2_init)
-//   - Linux/Windows: stays on CPU unless the build is configured
-//                   with CUDA / Vulkan / OpenCL
+//   - macOS / iOS:    Metal is engaged
+//   - Linux / Windows: Vulkan is engaged
+//   - Android:         Vulkan is preferred, OpenCL is the fallback
+//                      (Adreno only; non-Adreno phones may silently
+//                      fall back to CPU at ggml_cl2_init)
 //
 // The strict gate uses `response.stats.backendDevice` (0 = CPU, 1 = GPU)
 // and `response.stats.backendId` (0=CPU, 1=Metal, 2=CUDA, 3=Vulkan,
@@ -23,8 +23,9 @@
 // actually engaged -- a silent CPU fallback hides build / linkage /
 // kernel-init regressions. Set `QVAC_PARAKEET_GPU_SMOKE_RELAX=1` to
 // downgrade the gate to a warning (useful e.g. for an Android emulator
-// or iOS simulator without GPU support, or for an Adreno-6xx phone
-// where ggml-opencl rejects the device by design).
+// or iOS simulator without GPU support, an Adreno-6xx phone where
+// ggml-opencl rejects the device by design, or a Linux/Windows host
+// without a Vulkan-capable GPU / Vulkan SDK).
 //
 // Caveats / known limitations:
 //   1. CTC is intentionally not bundled on mobile (helpers.js
@@ -32,11 +33,11 @@
 //      `t.pass` on mobile-CTC, so the CTC test is effectively a no-op
 //      on Android/iOS.
 //   2. The "GPU is expected here" decision is platform-driven (see
-//      `expectsGpu()` below). Linux/Windows currently stay on CPU
-//      because no GPU backend is selected by default in
-//      qvac-lib-infer-parakeet/vcpkg.json on those platforms; the
-//      assertion is loosened to "must be CPU" there to keep the gate
-//      meaningful in both directions.
+//      `expectsGpu()` below). All four supported platforms (darwin,
+//      ios, linux, win32, android) wire a GPU backend by default in
+//      qvac-lib-infer-parakeet/vcpkg.json, so any CPU result on those
+//      platforms is treated as a regression (modulo
+//      QVAC_PARAKEET_GPU_SMOKE_RELAX).
 
 const fs = require('bare-fs')
 const path = require('bare-path')
@@ -57,11 +58,11 @@ const RELAX = process.env && process.env.QVAC_PARAKEET_GPU_SMOKE_RELAX === '1'
 
 function backendIdToName (id) {
   switch (id) {
-    case 0:  return 'CPU'
-    case 1:  return 'Metal'
-    case 2:  return 'CUDA'
-    case 3:  return 'Vulkan'
-    case 4:  return 'OpenCL'
+    case 0: return 'CPU'
+    case 1: return 'Metal'
+    case 2: return 'CUDA'
+    case 3: return 'Vulkan'
+    case 4: return 'OpenCL'
     case 99: return 'other-GPU'
     default: return `unknown(${id})`
   }
@@ -69,11 +70,17 @@ function backendIdToName (id) {
 
 // Which platforms wire up a GPU backend in qvac-lib-infer-parakeet's
 // vcpkg.json today (see the `parakeet-cpp` feature dependencies).
-//   - osx / ios:    metal       (default)
-//   - android:      opencl      (default; Adreno only)
-//   - linux/win32:  none yet    (Vulkan deferred per QVAC-17997 review)
+//   - darwin / ios:        metal              (default)
+//   - linux / win32:       vulkan             (default)
+//   - android:             vulkan + opencl    (default; Adreno only)
 function expectsGpu () {
-  return platform === 'darwin' || platform === 'ios' || platform === 'android'
+  return (
+    platform === 'darwin' ||
+    platform === 'ios' ||
+    platform === 'linux' ||
+    platform === 'win32' ||
+    platform === 'android'
+  )
 }
 
 function loadAudioSample () {
@@ -105,8 +112,8 @@ function assertGpuBackend (t, modelType, stats) {
     t.fail(`${modelType}/GPU: no response.stats returned (cannot verify backend)`)
     return
   }
-  const dev  = stats.backendDevice
-  const id   = stats.backendId
+  const dev = stats.backendDevice
+  const id = stats.backendId
   const name = backendIdToName(id)
   console.log(`[${modelType}/GPU] backendDevice=${dev} backendId=${id} (${name})`)
 
@@ -121,9 +128,9 @@ function assertGpuBackend (t, modelType, stats) {
   if (dev !== 1) {
     const msg = `${modelType}/${platform}: expected GPU backend, got ${name} ` +
                 `(backendDevice=${dev}, backendId=${id}). ` +
-                `useGPU=true was requested but the engine fell back to CPU. ` +
-                `Inspect the addon's --native-logs output for the load-time ` +
-                `backend init message.`
+                'useGPU=true was requested but the engine fell back to CPU. ' +
+                'Inspect the addon\'s --native-logs output for the load-time ' +
+                'backend init message.'
     if (RELAX) {
       t.comment(`WARNING (relaxed): ${msg}`)
       t.pass(`${modelType}/GPU smoke completed (relaxed)`)
@@ -139,8 +146,11 @@ function assertGpuBackend (t, modelType, stats) {
   // than break unnecessarily. We just require "the right family":
   if (platform === 'darwin' || platform === 'ios') {
     t.is(id, 1, `${modelType}/${platform}: expected Metal backendId=1, got ${name}`)
+  } else if (platform === 'linux' || platform === 'win32') {
+    t.is(id, 3, `${modelType}/${platform}: expected Vulkan backendId=3, got ${name}`)
   } else if (platform === 'android') {
-    t.is(id, 4, `${modelType}/${platform}: expected OpenCL backendId=4, got ${name}`)
+    t.ok(id === 3 || id === 4,
+      `${modelType}/${platform}: expected Vulkan(3) or OpenCL(4) backendId, got ${name}`)
   }
 }
 
@@ -173,7 +183,7 @@ async function runGpuModelTest (t, modelType, modelPath, audio, expectations) {
   }
 }
 
-test('CTC GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable platforms', { timeout: 600000 }, async (t) => {
+test('CTC GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'ctc')
@@ -186,7 +196,7 @@ test('CTC GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable plat
   }
 })
 
-test('TDT GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable platforms', { timeout: 600000 }, async (t) => {
+test('TDT GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'tdt')
@@ -199,7 +209,7 @@ test('TDT GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable plat
   }
 })
 
-test('EOU GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable platforms', { timeout: 600000 }, async (t) => {
+test('EOU GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'eou')
@@ -212,7 +222,7 @@ test('EOU GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable plat
   }
 })
 
-test('Sortformer GPU smoke — useGPU=true must engage Metal/OpenCL on GPU-capable platforms', { timeout: 600000 }, async (t) => {
+test('Sortformer GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
   try {
     const modelPath = await loadGgufOrSkip(t, 'sortformer')

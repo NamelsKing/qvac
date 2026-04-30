@@ -749,7 +749,7 @@ async function loadGgufOrSkip (t, modelType = 'tdt') {
     return ggufPath
   }
 
-  const remediation = `Run \`npm run setup-models\` (or set ` +
+  const remediation = 'Run `npm run setup-models` (or set ' +
     `QVAC_TEST_GGUF_${modelType.toUpperCase()}=/path/to/model.gguf ` +
     'or QVAC_TEST_GGUF_DIR=/path/to/models). For mobile, the model ' +
     'must be staged into test/mobile/testAssets/ before the test app ' +
