@@ -134,6 +134,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgomp1
 
+      - name: Windows - install Vulkan runtime
+        if: matrix.platform == 'win32'
+        uses: tetherto/qvac/.github/actions/setup-vulkan-sdk@0bbdca93da303a0b1634ba14a89cec085621078d
+        with:
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+
       - name: Setup Python (for .nemo -> .gguf conversion)
         uses: actions/setup-python@v5
         with:
