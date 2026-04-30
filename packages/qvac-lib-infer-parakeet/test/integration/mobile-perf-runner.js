@@ -2,6 +2,7 @@
 
 const fs = require('bare-fs')
 const path = require('bare-path')
+const proc = require('bare-process')
 const {
   binding,
   ParakeetInterface,
@@ -17,6 +18,7 @@ const {
 const platform = detectPlatform()
 const { samplesDir } = getTestPaths()
 const NUM_TRANSCRIPTIONS = 3
+const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
 
 function loadSampleAudio () {
   const samplePath = path.join(samplesDir, 'sample.raw')
@@ -39,6 +41,11 @@ async function runMobilePerfCase (t, opts) {
 
   if (!isMobile) {
     t.pass(`${modelLabel} ${epLabel} mobile perf case skipped on desktop`)
+    return
+  }
+
+  if (useGPU && NO_GPU) {
+    t.pass(`${modelLabel} ${epLabel} mobile perf GPU case skipped (NO_GPU=true)`)
     return
   }
 
