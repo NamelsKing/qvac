@@ -40,6 +40,7 @@ jobs:
     name: ${{ matrix.os }}-${{ matrix.platform }}-${{ matrix.arch }}-integration-tests
     env:
       GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+      NO_GPU: ${{ matrix.no_gpu || 'false' }}
     permissions:
       contents: read
       packages: read
@@ -50,21 +51,26 @@ jobs:
           - os: ai-run-ubuntu-22.04
             platform: linux
             arch: x64
+            no_gpu: 'true'
           - os: ai-run-linux-gpu
             platform: linux
             arch: x64
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
+            no_gpu: 'true'
           - os: macos-14-xlarge
             platform: darwin
             arch: arm64
+            no_gpu: 'true'
           - os: macos-15-large
             platform: darwin
             arch: x64
+            no_gpu: 'true'
           - os: windows-2022
             platform: win32
             arch: x64
+            no_gpu: 'true'
 
     steps:
       - name: Setup Node.js
@@ -132,7 +138,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgomp1
+          sudo apt-get install -y libgomp1 mesa-vulkan-drivers
 
       - name: Windows - install Vulkan runtime
         if: matrix.platform == 'win32'
