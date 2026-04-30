@@ -120,11 +120,6 @@ if(WIN32)
   )
 endif()
 
-if(ANDROID)
-  find_package(Vulkan REQUIRED)
-  target_link_libraries(${qvac_lib_infer_parakeet} PRIVATE ${Vulkan_LIBRARY})
-endif()
-
 if(APPLE)
   set_target_properties(
     ${qvac_lib_infer_parakeet}

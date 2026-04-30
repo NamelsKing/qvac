@@ -4,7 +4,20 @@
   "dependencies": [
     {
       "name": "parakeet-cpp",
-      "version>=": "2026-04-28"
+      "version>=": "2026-04-30",
+      "features": ["metal"],
+      "platform": "osx | ios"
+    },
+    {
+      "name": "parakeet-cpp",
+      "version>=": "2026-04-30",
+      "features": ["opencl"],
+      "platform": "android"
+    },
+    {
+      "name": "parakeet-cpp",
+      "version>=": "2026-04-30",
+      "platform": "!(osx | ios | android)"
     },
     {
       "name": "qvac-lib-inference-addon-cpp",

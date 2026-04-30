@@ -330,6 +330,11 @@ TEST_F(ParakeetModelTest, RuntimeStatsExposeExpectedKeys) {
     EXPECT_TRUE(hasStatKey(stats, "totalTranscriptions"));
     EXPECT_TRUE(hasStatKey(stats, "totalWallMs"));
     EXPECT_TRUE(hasStatKey(stats, "modelLoadMs"));
+    EXPECT_TRUE(hasStatKey(stats, "backendDevice"));
+    EXPECT_TRUE(hasStatKey(stats, "backendId"));
+    // Pre-load defaults: model never opened the engine -> CPU / id=0.
+    EXPECT_EQ(findStatInt(stats, "backendDevice"), 0);
+    EXPECT_EQ(findStatInt(stats, "backendId"),     0);
 }
 
 TEST_F(ParakeetModelTest, RuntimeStatsAccumulateAcrossCalls) {

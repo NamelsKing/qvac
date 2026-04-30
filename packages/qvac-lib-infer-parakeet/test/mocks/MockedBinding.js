@@ -133,7 +133,9 @@ class MockedBinding {
         decoderMs: 0,
         melSpecMs: 0,
         totalEncodedFrames: 0,
-        audioDurationMs
+        audioDurationMs,
+        backendDevice: 0,
+        backendId: 0
       }, null)
       this._busy = false
       this._state = state.LISTENING

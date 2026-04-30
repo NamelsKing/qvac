@@ -27,6 +27,25 @@ using namespace qvac_lib_inference_addon_cpp;
 
 namespace {
 
+// Stable numeric mapping from qvac_parakeet::Engine::backend_name()
+// to the integer code surfaced on JS as `RuntimeStats.backendId`.
+// Match by prefix because ggml_backend_name() returns indexed strings
+// like "CUDA0" / "Vulkan0" / "MTL0" when multiple GPUs of the same
+// family are present. Keep in sync with index.d.ts BackendId comment.
+//
+// Metal note: ggml-metal at the qvac-parakeet pin (upstream 58c38058)
+// reports the device as `"MTL0"` from `ggml_backend_name()` despite
+// parakeet's own header advertising the name as `"Metal"`. Treat both
+// forms (and any future indexed `MetalN` variant) as the Metal family.
+int backendIdFromName(const std::string& name) {
+  if (name == "CPU") return 0;
+  if (name.rfind("Metal",  0) == 0 || name.rfind("MTL", 0) == 0) return 1;
+  if (name.rfind("CUDA",   0) == 0) return 2;
+  if (name.rfind("Vulkan", 0) == 0) return 3;
+  if (name.rfind("OpenCL", 0) == 0) return 4;
+  return 99;
+}
+
 // HH:MM:SS.fff for Sortformer speaker-segment formatting
 std::string formatSeconds(float seconds) {
   if (seconds < 0.0f) seconds = 0.0f;
@@ -265,8 +284,22 @@ void ParakeetModel::load() {
     else if (detected == "eou")   cfg_.modelType = ModelType::EOU;
     else if (detected == "sortformer") cfg_.modelType = ModelType::SORTFORMER;
 
+    backend_device_ = engine_->backend_device() == qvac_parakeet::BackendDevice::GPU ? 1 : 0;
+    backend_name_   = engine_->backend_name();
+    backend_id_     = backendIdFromName(backend_name_);
+
     QLOG(logger::Priority::INFO,
-         std::string("Parakeet engine loaded; model_type=") + detected);
+         std::string("Parakeet engine loaded; model_type=") + detected +
+         " backend=" + backend_name_ +
+         " (device=" + (backend_device_ == 1 ? "GPU" : "CPU") +
+         ", id=" + std::to_string(backend_id_) + ")");
+    if (cfg_.useGPU && backend_device_ != 1) {
+      QLOG(logger::Priority::WARNING,
+           "Parakeet: useGPU=true was requested but the active backend is CPU. "
+           "The platform's GPU backend either isn't compiled in or refused to "
+           "initialise (e.g. missing OpenCL ICD, Adreno-tier policy, simulator "
+           "without Metal). Falling back to CPU.");
+    }
   }
 
   if (cfg_.streaming) {
@@ -838,6 +871,15 @@ RuntimeStats ParakeetModel::runtimeStats() const {
   stats.emplace_back("decoderMs",           static_cast<int64_t>(decoderMs_));
   stats.emplace_back("melSpecMs",           static_cast<int64_t>(melSpecMs_));
   stats.emplace_back("totalEncodedFrames",  static_cast<int64_t>(totalEncodedFrames_));
+
+  // Active backend, captured once at load() and stable for the
+  // lifetime of the model. `backendDevice` is the post-fallback
+  // device class (0 = CPU, 1 = GPU); `backendId` identifies which
+  // GPU backend is engaged (see backendIdFromName above for the
+  // mapping). Both are int64 to fit RuntimeStats's variant; the JS
+  // side reads them from runtimeStats() (a.k.a. response.stats).
+  stats.emplace_back("backendDevice",       static_cast<int64_t>(backend_device_));
+  stats.emplace_back("backendId",           static_cast<int64_t>(backend_id_));
 
   // audioDurationMs derived from samples / sample_rate
   const double sr = sample_rate_ > 0

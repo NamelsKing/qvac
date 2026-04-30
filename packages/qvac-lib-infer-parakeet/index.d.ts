@@ -164,12 +164,39 @@ declare class TranscriptionParakeet {
 
 declare namespace TranscriptionParakeet {
   /**
+   * Numeric code identifying which compute backend the engine is running
+   * on. Captured once at `loadModel()` from `Engine::backend_name()`
+   * (qvac-parakeet.cpp). Stable for the lifetime of the model.
+   *
+   *   0 = CPU       (no GPU compiled in, useGPU=false, or GPU init refused)
+   *   1 = Metal     (macOS / iOS)
+   *   2 = CUDA      (NVIDIA)
+   *   3 = Vulkan    (cross-platform GPU; not yet enabled in qvac-lib-infer-parakeet)
+   *   4 = OpenCL    (Adreno on Android)
+   *  99 = other     (a future / unrecognised backend)
+   */
+  export enum BackendId {
+    CPU = 0,
+    Metal = 1,
+    CUDA = 2,
+    Vulkan = 3,
+    OpenCL = 4,
+    Other = 99
+  }
+
+  /**
    * Keys returned by the native addon `ParakeetModel::runtimeStats()`
    * when stats are enabled. `totalTime` and `totalWallMs` are wall
    * time in milliseconds; `audioDurationMs` and other `*Ms` fields
    * are milliseconds where applicable. `decoderMs`, `melSpecMs`,
    * `totalEncodedFrames`, and `totalTokens` are populated only by
    * the offline ASR path and stay 0 for streaming / Sortformer.
+   *
+   * `backendDevice` and `backendId` are the post-fallback truth: a
+   * load-time GPU init failure (e.g. Adreno-tier rejection, missing
+   * OpenCL ICD, simulator without Metal) leaves both at 0 / `CPU`
+   * even when `useGPU: true` was requested. See {@link BackendId}
+   * for the integer codes.
    */
   export interface RuntimeStats {
     totalTime: number
@@ -184,6 +211,10 @@ declare namespace TranscriptionParakeet {
     decoderMs: number
     totalWallMs: number
     totalEncodedFrames: number
+    /** 0 = CPU, 1 = GPU (post-fallback). */
+    backendDevice: number
+    /** {@link BackendId} integer code. */
+    backendId: number
   }
 
   /**
@@ -203,6 +234,7 @@ declare namespace TranscriptionParakeet {
     OutputEvent,
     AppendInput,
     Addon,
+    BackendId,
     InferenceClientState
   }
 }

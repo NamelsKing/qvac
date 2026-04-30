@@ -103,7 +103,6 @@ async function streamAudio (model, audioData, chunkDurationMs, delayMs) {
     stream.push(new Float32Array(chunk))
     chunksFed++
     totalSamplesFed += chunk.length
-    console.log(`[feed] chunk #${chunksFed}/${totalChunks} samples=${chunk.length} total=${totalSamplesFed}`)
     if (delayMs > 0 && i + samplesPerChunk < audioData.length) {
       await new Promise(resolve => setTimeout(resolve, delayMs))
     }

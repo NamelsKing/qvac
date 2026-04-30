@@ -186,6 +186,22 @@ private:
   // other than 16 000 throws on load.
   int                                  sample_rate_ = 16000;
 
+  // Active backend, captured once at load() from
+  // qvac_parakeet::Engine::backend_device() / ::backend_name(). The
+  // *_device_ field is the post-fallback truth: a load-time GPU init
+  // failure (e.g. Adreno-tier rejection, missing OpenCL ICD subgroup
+  // extensions, simulator without Metal) leaves it at 0 / "CPU" even
+  // when cfg_.useGPU was true. Surfaced through runtimeStats() as
+  // numeric fields (the addon-cpp RuntimeStats variant only carries
+  // double / int64); the GPU smoke tests gate on
+  // `backendDevice == 1` and friends.
+  //
+  // backend_id_ codes (kept stable; mirrored on the JS side):
+  //   0 = CPU, 1 = Metal, 2 = CUDA, 3 = Vulkan, 4 = OpenCL, 99 = other
+  int                                  backend_device_ = 0;
+  int                                  backend_id_     = 0;
+  std::string                          backend_name_   = "CPU";
+
   // ── Token / sentinel constants ─────────────────────────────────────────
   // The engine itself uses different vocab IDs internally; we surface only 
   // the "[No speech detected]" / "[Audio too short]" / ... text sentinels 
