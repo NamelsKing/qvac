@@ -528,12 +528,16 @@ jobs:
         working-directory: ./test-framework
         env:
           # AAPT's resource compiler (Container.addFileEntry ->
-          # kotlin.io.ByteStreamsKt.readBytes) reads each binary
-          # asset into a single ByteArray; with the q4 GGUFs we now
-          # bundle (~370 MiB for TDT alone) the default ~2 GB heap
-          # OOMs at `:app:mergeReleaseResources`. With --no-daemon the
-          # launcher JVM IS the build JVM, so GRADLE_OPTS propagates
-          # to AGP's in-process workers.
+          # kotlin.io.ByteStreamsKt.readBytes) reads each binary asset
+          # into a single ByteArray; with the q4 GGUFs we now bundle
+          # (~370 MiB for TDT alone) the default ~2 GB heap OOMs at
+          # `:app:mergeReleaseResources`. GRADLE_OPTS sizes the launcher
+          # JVM, but Gradle still forks a "single-use Daemon" JVM for
+          # AGP workers (because we override JAVA_HOME below) and that
+          # child reads its heap from `gradle.properties`, not from
+          # GRADLE_OPTS — so we ALSO append `org.gradle.jvmargs` into
+          # `android/gradle.properties` after `expo prebuild` regenerates
+          # it. Both sites need the same headroom.
           GRADLE_OPTS: "-Xmx12g -XX:MaxMetaspaceSize=1g"
         run: |
           echo "Building Android APK for Device Farm..."
@@ -550,6 +554,20 @@ jobs:
           echo "Bundle completed successfully"
 
           cd android
+          # Propagate the heap headroom into the forked AGP build JVM.
+          # `expo prebuild --clean` regenerates this file each run, so we
+          # append after prebuild (here) rather than committing a static
+          # gradle.properties override. Idempotent if rerun.
+          if ! grep -q '^org\.gradle\.jvmargs=' gradle.properties 2>/dev/null; then
+            {
+              echo ""
+              echo "# Heap headroom for AAPT resource compilation (parakeet bundles q4 GGUFs)."
+              echo "org.gradle.jvmargs=-Xmx12g -XX:MaxMetaspaceSize=1g"
+            } >> gradle.properties
+          fi
+          echo "Effective gradle.properties heap config:"
+          grep -E '^org\.gradle\.jvmargs' gradle.properties || echo "(none)"
+
           echo "Building APK with Gradle (RELEASE with embedded JS bundle)..."
           echo "GRADLE_OPTS=${GRADLE_OPTS}"
           ./gradlew assembleRelease \
