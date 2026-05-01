@@ -14,11 +14,11 @@
 #include <stdexcept>
 #include <vector>
 
+#include <parakeet/parakeet.h>
+
+#include "ggml.h"
 #include "qvac-lib-inference-addon-cpp/Errors.hpp"
 #include "qvac-lib-inference-addon-cpp/Logger.hpp"
-
-#include <parakeet/parakeet.h>
-#include "ggml.h"
 
 namespace qvac_lib_infer_parakeet {
 
@@ -284,7 +284,8 @@ void ParakeetModel::load() {
     else if (detected == "eou")   cfg_.modelType = ModelType::EOU;
     else if (detected == "sortformer") cfg_.modelType = ModelType::SORTFORMER;
 
-    backend_device_ = engine_->backend_device() == parakeet::BackendDevice::GPU ? 1 : 0;
+    backend_device_ =
+        engine_->backend_device() == parakeet::BackendDevice::GPU ? 1 : 0;
     backend_name_   = engine_->backend_name();
     backend_id_     = backendIdFromName(backend_name_);
 
@@ -611,11 +612,11 @@ void ParakeetModel::openStreamingSession_() {
     opts.emit_partials  = cfg_.streamingEmitPartials;
 
     diar_session_ = engine->diarize_start(
-        opts,
-        [this](const parakeet::StreamingDiarizationSegment& seg) {
+        opts, [this](const parakeet::StreamingDiarizationSegment& seg) {
           // Synthetic terminator (fired on finalize when audio ended on a
           // chunk boundary): nothing to emit.
-          if (seg.speaker_id < 0) return;
+          if (seg.speaker_id < 0)
+            return;
           Transcript t;
           std::ostringstream os;
           os << "Speaker " << seg.speaker_id << ": "
@@ -638,9 +639,9 @@ void ParakeetModel::openStreamingSession_() {
     opts.enable_energy_vad = cfg_.streamingEnergyVad;
 
     asr_session_ = engine->stream_start(
-        opts,
-        [this](const parakeet::StreamingSegment& seg) {
-          if (seg.text.empty() && !seg.is_eou_boundary) return;
+        opts, [this](const parakeet::StreamingSegment& seg) {
+          if (seg.text.empty() && !seg.is_eou_boundary)
+            return;
           Transcript t;
           t.text     = seg.text.empty() ? std::string("<EOU>") : seg.text;
           t.start    = static_cast<float>(seg.start_s);

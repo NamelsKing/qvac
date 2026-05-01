@@ -40,7 +40,7 @@ namespace parakeet {
 class Engine;
 class StreamSession;
 class SortformerStreamSession;
-}
+} // namespace parakeet
 
 namespace qvac_lib_infer_parakeet {
 
@@ -171,7 +171,7 @@ private:
   // model_type). Lifetime: opened in load() when cfg_.streaming == true,
   // finalize()d on endOfStream(), reset on unload(). Each process() call
   // routes through feed_pcm_f32() instead of the offline *_samples paths.
-  std::unique_ptr<parakeet::StreamSession>           asr_session_;
+  std::unique_ptr<parakeet::StreamSession> asr_session_;
   std::unique_ptr<parakeet::SortformerStreamSession> diar_session_;
 
   // Wall-clock seconds of audio fed to the streaming sessions so far,
