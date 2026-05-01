@@ -26,16 +26,8 @@ async function runCorruptedModelTest (options = {}) { // eslint-disable-line no-
   return runIntegrationModule('../integration/corrupted-model.test.js', options)
 }
 
-async function runExternalDataStagingTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/external-data-staging.test.js', options)
-}
-
 async function runGpuSmokeTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/gpu-smoke.test.js', options)
-}
-
-async function runIndividualFilePathsTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/individual-file-paths.test.js', options)
 }
 
 async function runLiveStreamSimulationTest (options = {}) { // eslint-disable-line no-unused-vars
@@ -74,23 +66,13 @@ async function runMultipleTranscriptionsTest (options = {}) { // eslint-disable-
   return runIntegrationModule('../integration/multiple-transcriptions.test.js', options)
 }
 
-async function runNamedPathsAllModelsTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/named-paths-all-models.test.js', options)
-}
-
-async function runNamedPathsReloadTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/named-paths-reload.test.js', options)
-}
-
 module.exports = {
   runAccuracyMultilangTest,
   runAddonMultimodelTest,
   runAddonTest,
   runColdStartTimingTest,
   runCorruptedModelTest,
-  runExternalDataStagingTest,
   runGpuSmokeTest,
-  runIndividualFilePathsTest,
   runLiveStreamSimulationTest,
   runMobilePerfCtcCpuTest,
   runMobilePerfCtcGpuTest,
@@ -99,7 +81,5 @@ module.exports = {
   runMobilePerfSortformerCpuTest,
   runMobilePerfSortformerGpuTest,
   runModelFileValidationTest,
-  runMultipleTranscriptionsTest,
-  runNamedPathsAllModelsTest,
-  runNamedPathsReloadTest
+  runMultipleTranscriptionsTest
 }

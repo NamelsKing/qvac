@@ -3,6 +3,7 @@
 const test = require('brittle')
 const path = require('bare-path')
 const fs = require('bare-fs')
+const proc = require('bare-process')
 const {
   binding,
   ParakeetInterface,
@@ -20,6 +21,7 @@ const {
 
 const platform = detectPlatform()
 const { modelPath, samplesDir } = getTestPaths()
+const NO_GPU = proc.env && proc.env.NO_GPU === 'true'
 
 function loadAudio (samplePath) {
   const rawBuffer = fs.readFileSync(samplePath)
@@ -47,16 +49,19 @@ const ALL_DEVICE_CONFIGS = [
   { id: 'gpu', useGPU: true },
   { id: 'cpu', useGPU: false }
 ]
-const DEVICE_CONFIGS = isMobile
-  ? ALL_DEVICE_CONFIGS
-  : ALL_DEVICE_CONFIGS.filter(c => c.id === 'cpu')
+const DEVICE_CONFIGS = ALL_DEVICE_CONFIGS.filter(c => {
+  if (NO_GPU && c.useGPU) return false
+  if (!isMobile && c.useGPU) return false
+  return true
+})
 const MOBILE_PERF_MODEL_TYPES = ['tdt']
 const PERF_MODEL_TYPES = isMobile ? MOBILE_PERF_MODEL_TYPES : ['tdt']
 
 async function resolvePerfModelPath (modelType) {
   if (modelType === 'tdt') {
-    await ensureModel(modelPath)
-    return modelPath
+    const resolved = await ensureModel(modelPath)
+    if (!resolved) throw new Error(`Unable to resolve model for type: ${modelType}`)
+    return resolved
   }
   const resolved = await ensureModelForType(modelType)
   if (!resolved) throw new Error(`Unable to resolve model for type: ${modelType}`)

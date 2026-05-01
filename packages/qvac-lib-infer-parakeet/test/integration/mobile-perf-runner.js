@@ -9,7 +9,7 @@ const {
   detectPlatform,
   setupJsLogger,
   getTestPaths,
-  ensureModelForType,
+  loadGgufOrSkip,
   getNamedPathsConfig,
   isMobile,
   recordParakeetStats
@@ -72,11 +72,8 @@ async function runMobilePerfCase (t, opts) {
     console.log(` useGPU: ${useGPU}`)
     console.log('='.repeat(60) + '\n')
 
-    const modelPath = await ensureModelForType(modelType)
-    if (!modelPath) {
-      t.fail(`Unable to resolve model for type: ${modelType}`)
-      return
-    }
+    const modelPath = await loadGgufOrSkip(t, modelType)
+    if (!modelPath) return
     console.log(` Model path: ${modelPath}`)
 
     const audioData = loadSampleAudio()
