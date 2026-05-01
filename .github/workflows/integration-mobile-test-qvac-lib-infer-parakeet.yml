@@ -555,10 +555,14 @@ jobs:
 
           cd android
           # Propagate the heap headroom into the forked AGP build JVM.
-          # `expo prebuild --clean` regenerates this file each run, so we
-          # append after prebuild (here) rather than committing a static
-          # gradle.properties override. Idempotent if rerun.
-          if ! grep -q '^org\.gradle\.jvmargs=' gradle.properties 2>/dev/null; then
+          # `expo prebuild --clean` regenerates this file each run and
+          # writes a default `org.gradle.jvmargs=-Xmx2048m ...` line that
+          # AAPT's Container.addFileEntry OOMs on when reading the q4
+          # GGUFs we bundle (TDT alone is ~370 MiB). Replace the existing
+          # line in place if present, otherwise append it.
+          if grep -q '^org\.gradle\.jvmargs=' gradle.properties 2>/dev/null; then
+            sed -i 's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx12g -XX:MaxMetaspaceSize=1g|' gradle.properties
+          else
             {
               echo ""
               echo "# Heap headroom for AAPT resource compilation (parakeet bundles q4 GGUFs)."
