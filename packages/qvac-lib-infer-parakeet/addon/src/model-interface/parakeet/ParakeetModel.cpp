@@ -17,7 +17,7 @@
 #include "qvac-lib-inference-addon-cpp/Errors.hpp"
 #include "qvac-lib-inference-addon-cpp/Logger.hpp"
 
-#include "qvac-parakeet/ctc/engine.h"
+#include <parakeet/parakeet.h>
 #include "ggml.h"
 
 namespace qvac_lib_infer_parakeet {
@@ -27,7 +27,7 @@ using namespace qvac_lib_inference_addon_cpp;
 
 namespace {
 
-// Stable numeric mapping from qvac_parakeet::Engine::backend_name()
+// Stable numeric mapping from parakeet::Engine::backend_name()
 // to the integer code surfaced on JS as `RuntimeStats.backendId`.
 // Match by prefix because ggml_backend_name() returns indexed strings
 // like "CUDA0" / "Vulkan0" / "MTL0" when multiple GPUs of the same
@@ -250,7 +250,7 @@ void ParakeetModel::load() {
     }
 
     installGgmlLogTrampolineOnce();
-    qvac_parakeet::EngineOptions eopts;
+    parakeet::EngineOptions eopts;
     eopts.model_gguf_path = gguf_path.string();
     // n_threads = 0 lets ggml pick hardware_concurrency, matching the
     // standalone CLI's default. cfg_.maxThreads is honoured only when
@@ -264,7 +264,7 @@ void ParakeetModel::load() {
 
     {
       std::lock_guard<std::mutex> lk(engine_mutex_);
-      engine_ = std::make_unique<qvac_parakeet::Engine>(eopts);
+      engine_ = std::make_unique<parakeet::Engine>(eopts);
     }
   });
 
@@ -284,7 +284,7 @@ void ParakeetModel::load() {
     else if (detected == "eou")   cfg_.modelType = ModelType::EOU;
     else if (detected == "sortformer") cfg_.modelType = ModelType::SORTFORMER;
 
-    backend_device_ = engine_->backend_device() == qvac_parakeet::BackendDevice::GPU ? 1 : 0;
+    backend_device_ = engine_->backend_device() == parakeet::BackendDevice::GPU ? 1 : 0;
     backend_name_   = engine_->backend_name();
     backend_id_     = backendIdFromName(backend_name_);
 
@@ -521,14 +521,14 @@ ParakeetModel::preprocessAudioData(const std::vector<uint8_t>& audioData,
 std::string ParakeetModel::runAsrProcess_(const Input& input) {
   if (input.empty()) return ERR_AUDIO_SHORT;
 
-  qvac_parakeet::Engine* engine = nullptr;
+  parakeet::Engine* engine = nullptr;
   {
     std::lock_guard<std::mutex> lk(engine_mutex_);
     engine = engine_.get();
   }
   if (!engine) return ERR_MODEL_NOT_LOADED;
 
-  qvac_parakeet::EngineResult result;
+  parakeet::EngineResult result;
   const int64_t t = measureMs([&] {
     result = engine->transcribe_samples(input.data(),
                                         static_cast<int>(input.size()),
@@ -547,18 +547,18 @@ std::string ParakeetModel::runAsrProcess_(const Input& input) {
 std::string ParakeetModel::runSortformerProcess_(const Input& input) {
   if (input.empty()) return ERR_AUDIO_SHORT;
 
-  qvac_parakeet::Engine* engine = nullptr;
+  parakeet::Engine* engine = nullptr;
   {
     std::lock_guard<std::mutex> lk(engine_mutex_);
     engine = engine_.get();
   }
   if (!engine) return ERR_MODEL_NOT_LOADED;
 
-  qvac_parakeet::DiarizationOptions dopts;
+  parakeet::DiarizationOptions dopts;
   dopts.threshold      = diarConfig_.onset;
   dopts.min_segment_ms = static_cast<int>(diarConfig_.minDurationOn * 1000.0f);
 
-  qvac_parakeet::DiarizationResult diar;
+  parakeet::DiarizationResult diar;
   encoderMs_ += measureMs([&] {
     diar = engine->diarize_samples(input.data(),
                                    static_cast<int>(input.size()),
@@ -583,7 +583,7 @@ std::string ParakeetModel::runSortformerProcess_(const Input& input) {
 // ─────────────────────────────────────────────────────────────────────────
 
 void ParakeetModel::openStreamingSession_() {
-  qvac_parakeet::Engine* engine = nullptr;
+  parakeet::Engine* engine = nullptr;
   {
     std::lock_guard<std::mutex> lk(engine_mutex_);
     engine = engine_.get();
@@ -602,7 +602,7 @@ void ParakeetModel::openStreamingSession_() {
   }
 
   if (cfg_.modelType == ModelType::SORTFORMER) {
-    qvac_parakeet::SortformerStreamingOptions opts;
+    parakeet::SortformerStreamingOptions opts;
     opts.sample_rate    = sample_rate_;
     opts.chunk_ms       = cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 2000;
     opts.history_ms     = cfg_.streamingHistoryMs > 0 ? cfg_.streamingHistoryMs : 30000;
@@ -612,7 +612,7 @@ void ParakeetModel::openStreamingSession_() {
 
     diar_session_ = engine->diarize_start(
         opts,
-        [this](const qvac_parakeet::StreamingDiarizationSegment& seg) {
+        [this](const parakeet::StreamingDiarizationSegment& seg) {
           // Synthetic terminator (fired on finalize when audio ended on a
           // chunk boundary): nothing to emit.
           if (seg.speaker_id < 0) return;
@@ -631,7 +631,7 @@ void ParakeetModel::openStreamingSession_() {
           }
         });
   } else {
-    qvac_parakeet::StreamingOptions opts;
+    parakeet::StreamingOptions opts;
     opts.sample_rate    = sample_rate_;
     opts.chunk_ms       = cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 1000;
     opts.emit_partials  = cfg_.streamingEmitPartials;
@@ -639,7 +639,7 @@ void ParakeetModel::openStreamingSession_() {
 
     asr_session_ = engine->stream_start(
         opts,
-        [this](const qvac_parakeet::StreamingSegment& seg) {
+        [this](const parakeet::StreamingSegment& seg) {
           if (seg.text.empty() && !seg.is_eou_boundary) return;
           Transcript t;
           t.text     = seg.text.empty() ? std::string("<EOU>") : seg.text;

@@ -39,7 +39,7 @@ find_path(
   REQUIRED
 )
 
-find_package(qvac-parakeet-cpp CONFIG REQUIRED)
+find_package(parakeet-cpp CONFIG REQUIRED)
 find_package(ggml CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -99,7 +99,7 @@ target_include_directories(
 target_compile_definitions(${qvac_lib_infer_parakeet} PUBLIC JS_LOGGER)
 
 target_link_libraries(${LIB_NAME} PRIVATE
-    qvac-parakeet::qvac-parakeet
+    parakeet::parakeet
     ggml::ggml
 )
 
@@ -107,7 +107,7 @@ target_link_libraries(
   ${qvac_lib_infer_parakeet}
   PRIVATE
     ${LIB_NAME}
-    qvac-parakeet::qvac-parakeet
+    parakeet::parakeet
     ggml::ggml
 )
 if(WIN32)
@@ -218,7 +218,7 @@ if(BUILD_TESTING)
     target_link_libraries(parakeet_tests
       PRIVATE
         GTest::gmock_main
-        qvac-parakeet::qvac-parakeet
+        parakeet::parakeet
         ggml::ggml
     )
 

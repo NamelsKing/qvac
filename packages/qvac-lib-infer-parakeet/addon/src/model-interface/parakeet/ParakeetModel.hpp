@@ -6,13 +6,13 @@
 // + decoder + ctc/sortformer) plus a hand-rolled mel-spectrogram, CMVN,
 // chunked-limited streaming state machine for EOU, and a Sortformer
 // post-processing pipeline. All of that has been replaced by a single
-// `qvac_parakeet::Engine` from `parakeet-cpp` (vcpkg overlay port). The
+// `parakeet::Engine` from `parakeet-cpp` (vcpkg overlay port). The
 // engine internally handles mel + encoder + decoder + diarization for any
 // of the four model types (CTC, TDT, EOU, Sortformer) given a single GGUF
 // file, so the binding's job is reduced to:
 //
 //   1. accumulate GGUF bytes from `setWeightsForFile()` into a temp file,
-//   2. open `qvac_parakeet::Engine` against that path,
+//   2. open `parakeet::Engine` against that path,
 //   3. dispatch `process()` to either `transcribe_samples()` (CTC / TDT /
 //      EOU) or `diarize_samples()` (Sortformer),
 //   4. wrap the engine result in `Transcript` and fire the on-segment
@@ -36,7 +36,7 @@
 #include "qvac-lib-inference-addon-cpp/ModelInterfaces.hpp"
 #include "qvac-lib-inference-addon-cpp/RuntimeStats.hpp"
 
-namespace qvac_parakeet {
+namespace parakeet {
 class Engine;
 class StreamSession;
 class SortformerStreamSession;
@@ -144,7 +144,7 @@ private:
   // The addon framework streams the GGUF bytes via setWeightsForFile().
   // We accumulate them into `gguf_buffer_` keyed by the (single) GGUF
   // filename; on load() we materialise the buffer into a temp file and
-  // hand the path to qvac_parakeet::Engine.
+  // hand the path to parakeet::Engine.
   std::string                          gguf_filename_;
   std::vector<uint8_t>                 gguf_buffer_;
   std::filesystem::path                gguf_temp_path_;
@@ -164,15 +164,15 @@ private:
 
   // The Engine itself (pimpl-owned via unique_ptr to keep the
   // qvac-parakeet headers out of the binding's public include surface).
-  std::unique_ptr<qvac_parakeet::Engine> engine_;
+  std::unique_ptr<parakeet::Engine> engine_;
   mutable std::mutex                     engine_mutex_;
 
   // Streaming sessions (only one of the two is open at a time, depending on
   // model_type). Lifetime: opened in load() when cfg_.streaming == true,
   // finalize()d on endOfStream(), reset on unload(). Each process() call
   // routes through feed_pcm_f32() instead of the offline *_samples paths.
-  std::unique_ptr<qvac_parakeet::StreamSession>           asr_session_;
-  std::unique_ptr<qvac_parakeet::SortformerStreamSession> diar_session_;
+  std::unique_ptr<parakeet::StreamSession>           asr_session_;
+  std::unique_ptr<parakeet::SortformerStreamSession> diar_session_;
 
   // Wall-clock seconds of audio fed to the streaming sessions so far,
   // used to translate per-session relative segment timestamps into a
@@ -187,7 +187,7 @@ private:
   int                                  sample_rate_ = 16000;
 
   // Active backend, captured once at load() from
-  // qvac_parakeet::Engine::backend_device() / ::backend_name(). The
+  // parakeet::Engine::backend_device() / ::backend_name(). The
   // *_device_ field is the post-fallback truth: a load-time GPU init
   // failure (e.g. Adreno-tier rejection, missing OpenCL ICD subgroup
   // extensions, simulator without Metal) leaves it at 0 / "CPU" even
