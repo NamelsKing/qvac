@@ -17,11 +17,23 @@ struct Transcript {
   float start;
   float end;
   size_t id;
+  // True when this segment ends on a recognised end-of-utterance boundary
+  // (EOU streaming: `<EOU>` token; CTC/TDT/Sortformer always leave this
+  // false). The text field still carries any speech tokens decoded in the
+  // same chunk; consumers that want a turn-end signal independent of the
+  // transcript should test this flag.
+  bool isEndOfTurn;
 
-  Transcript() : toAppend{false}, start(-1.0F), end(-1.0F), id{0} {}
+  Transcript()
+      : toAppend{false}, start(-1.0F), end(-1.0F), id{0}, isEndOfTurn{false} {}
 
   explicit Transcript(std::string_view strView)
-      : text{strView}, toAppend{false}, start{-1.0F}, end{-1.0F}, id{0} {}
+      : text{strView},
+        toAppend{false},
+        start{-1.0F},
+        end{-1.0F},
+        id{0},
+        isEndOfTurn{false} {}
 };
 
 /**

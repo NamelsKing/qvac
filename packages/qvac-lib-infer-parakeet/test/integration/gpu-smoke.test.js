@@ -218,6 +218,10 @@ test('TDT GPU smoke — useGPU=true must engage the GPU backend on GPU-capable p
   }
 })
 
+// EOU on offline mode runs the joint-network ASR path; on a clip with
+// real speech that must produce non-empty text. minTextLength=1 catches
+// the zero-token regression triggered by ggml-metal's Q-variant
+// mul_mv + bias/residual fusion on the EOU q8_0 joint network.
 test('EOU GPU smoke — useGPU=true must engage the GPU backend on GPU-capable platforms', { timeout: 600000, skip: NO_GPU }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
   try {
@@ -225,7 +229,7 @@ test('EOU GPU smoke — useGPU=true must engage the GPU backend on GPU-capable p
     if (!modelPath) return
     const audio = loadAudioSample()
     if (!audio) { t.pass('sample.raw not found — skipping'); return }
-    await runGpuModelTest(t, 'eou', modelPath, audio, { minTextLength: 0 })
+    await runGpuModelTest(t, 'eou', modelPath, audio, { minTextLength: 1 })
   } finally {
     try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }

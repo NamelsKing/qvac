@@ -90,6 +90,16 @@ declare interface TranscriptionSegment {
   end: number
   toAppend: boolean
   id?: number
+  /**
+   * True when this segment ends on a recognised end-of-utterance
+   * boundary. EOU streaming sessions set this on the chunk that
+   * contains the `<EOU>` token; CTC / TDT / Sortformer always leave it
+   * false. The `text` field still carries any speech tokens decoded in
+   * the same chunk, so consumers that want a turn-end signal
+   * independent of the transcript should test this flag rather than
+   * the segment text.
+   */
+  isEndOfTurn?: boolean
 }
 
 /**

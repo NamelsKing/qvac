@@ -60,6 +60,10 @@ struct JsParakeetOutputHandler
                     "id",
                     js::Number::create(
                         this->env_, static_cast<uint64_t>(output[i].id)));
+                jsTranscript.setProperty(
+                    this->env_,
+                    "isEndOfTurn",
+                    js::Boolean::create(this->env_, output[i].isEndOfTurn));
                 jsOutput.set(this->env_, i, jsTranscript);
               }
               return jsOutput;

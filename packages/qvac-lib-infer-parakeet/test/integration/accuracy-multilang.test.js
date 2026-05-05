@@ -3,14 +3,13 @@
 /**
  * Accuracy and multi-language tests.
  *
- * The English test gates on Word Error Rate (WER). The non-English
- * tests verify that whichever Parakeet GGUF is staged produces
- * non-empty multi-segment output for Spanish / French / Croatian
- * audio -- TDT v3 (the default) handles ~25 languages natively, so
- * we expect real transcripts; CTC GGUFs are English-only and would
- * produce gibberish-but-non-empty output, which still satisfies the
- * smoke-level assertions here. Tightening these to per-language WER
- * once we have reference transcripts is a separate task.
+ * English is gated on Word Error Rate (WER), once with the multilingual
+ * TDT v3 GGUF (the addon's default) and once with the English-only CTC
+ * GGUF; both should land within the 30 % WER threshold on a clean clip.
+ * The non-English tests run against TDT only and verify multi-segment
+ * non-empty output for Spanish / French / Croatian audio (TDT v3
+ * handles ~25 languages natively). Per-language WER for non-English
+ * remains a separate task pending reference transcripts.
  */
 
 const test = require('brittle')
@@ -198,7 +197,7 @@ test('Accuracy test - English (primary language)', { timeout: 300000 }, async (t
       t.ok(result.segmentCount > 0, `Should produce segments (got ${result.segmentCount})`)
     }
   } finally {
-    // Logger is released once at the end of the summary test.
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })
 
@@ -231,7 +230,7 @@ test('Transcription test - Spanish (non-primary language)', { timeout: 300000 },
       console.log('\n✅ Spanish audio produced output')
     }
   } finally {
-    // Logger is released once at the end of the summary test.
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })
 
@@ -261,7 +260,7 @@ test('Transcription test - French (non-primary language)', { timeout: 300000 }, 
       console.log('\n✅ French audio produced output')
     }
   } finally {
-    // Logger is released once at the end of the summary test.
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })
 
@@ -291,76 +290,47 @@ test('Transcription test - Croatian (non-primary language)', { timeout: 300000 }
       console.log('\n✅ Croatian audio produced output')
     }
   } finally {
-    // Logger is released once at the end of the summary test.
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })
 
 /**
- * Summary test - run all languages and report results
+ * CTC English accuracy test with WER validation.
+ *
+ * Mirrors the TDT-default English test above but loads the CTC GGUF
+ * explicitly. CTC is English-only and uses a different decoder
+ * topology than TDT, so we want an independent WER signal: a
+ * regression in the CTC head (e.g. a ggml-cpu / ggml-metal mat-mul
+ * patch breaking only one of the two heads) wouldn't be caught by
+ * the TDT-default English test alone.
+ *
+ * Skipped on mobile (CTC GGUF intentionally not bundled into the
+ * mobile test app -- see helpers.js MODEL_CONFIGS comments).
  */
-test('Multi-language summary test', { timeout: 900000 }, async (t) => {
+test('Accuracy test - English (CTC head)', { timeout: 300000 }, async (t) => {
   const loggerBinding = setupJsLogger(binding)
 
   console.log('\n' + '='.repeat(60))
-  console.log('MULTI-LANGUAGE SUMMARY TEST')
+  console.log('ENGLISH ACCURACY TEST (CTC)')
   console.log('='.repeat(60))
+  console.log(` Platform: ${platform}`)
 
-  const stagedGguf = await loadGgufOrSkip(t)
+  const stagedGguf = await loadGgufOrSkip(t, 'ctc')
   if (!stagedGguf) return
-
-  const results = {}
-
-  for (const [code, config] of Object.entries(LANGUAGE_TESTS)) {
-    results[code] = await runLanguageTest(t, config, loggerBinding, stagedGguf)
-  }
-
-  // Summary
-  console.log('\n' + '='.repeat(60))
-  console.log('📊 SUMMARY')
-  console.log('='.repeat(60))
-
-  let passedCount = 0
-  let skippedCount = 0
-  let failedCount = 0
-
-  for (const [code, result] of Object.entries(results)) {
-    const config = LANGUAGE_TESTS[code]
-    let status = ''
-
-    if (result.skipped) {
-      status = '⏭️ SKIPPED'
-      skippedCount++
-    } else if (result.passed) {
-      status = '✅ PASSED'
-      passedCount++
-    } else {
-      status = '❌ FAILED'
-      failedCount++
-    }
-
-    console.log(`\n  ${config.name} (${code}): ${status}`)
-    if (result.werPercent) {
-      console.log(`    WER: ${result.werPercent}`)
-    }
-    if (result.segmentCount !== undefined) {
-      console.log(`    Segments: ${result.segmentCount}`)
-    }
-    if (result.error) {
-      console.log(`    Error: ${result.error}`)
-    }
-  }
-
-  console.log('\n' + '='.repeat(60))
-  console.log(`  Total: ${passedCount} passed, ${skippedCount} skipped, ${failedCount} failed`)
-  console.log('='.repeat(60) + '\n')
-
-  // Assertions
-  t.ok(passedCount > 0, 'At least one language test should pass')
-  t.ok(results.en?.passed !== false, 'English test should pass (primary language)')
+  console.log(` Model: ${stagedGguf}`)
 
   try {
-    loggerBinding.releaseLogger()
-  } catch (e) {
-    // Ignore
+    const result = await runLanguageTest(t, LANGUAGE_TESTS.en, loggerBinding, stagedGguf)
+
+    if (result.skipped) {
+      t.pass(`CTC English accuracy test skipped (${result.reason})`)
+    } else if (result.error) {
+      t.fail(`CTC English accuracy test failed: ${result.error}`)
+    } else {
+      t.ok(result.passed, `CTC English WER should be below ${LANGUAGE_TESTS.en.threshold * 100}%, got ${result.werPercent}`)
+      t.ok(result.segmentCount > 0, `Should produce segments (got ${result.segmentCount})`)
+    }
+  } finally {
+    try { loggerBinding.releaseLogger() } catch (e) { /* ignore */ }
   }
 })

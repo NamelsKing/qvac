@@ -643,10 +643,11 @@ void ParakeetModel::openStreamingSession_() {
           if (seg.text.empty() && !seg.is_eou_boundary)
             return;
           Transcript t;
-          t.text     = seg.text.empty() ? std::string("<EOU>") : seg.text;
-          t.start    = static_cast<float>(seg.start_s);
-          t.end      = static_cast<float>(seg.end_s);
-          t.toAppend = true;
+          t.text        = seg.text;
+          t.start       = static_cast<float>(seg.start_s);
+          t.end         = static_cast<float>(seg.end_s);
+          t.toAppend    = true;
+          t.isEndOfTurn = seg.is_eou_boundary;
           {
             std::lock_guard<std::mutex> lk(streaming_mutex_);
             pending_streaming_segments_.push_back(std::move(t));
@@ -680,16 +681,27 @@ std::string ParakeetModel::runStreamingProcess_(const Input& input) {
     return std::string();
   }
 
+  // The JS append() layer batches every chunk for a job in JS memory and
+  // forwards the concatenated buffer in a single 'end of job' runJob call
+  // (see parakeet.js); the framework's IModel interface has no separate
+  // end-of-stream hook, so process() is invoked exactly once per JS run().
+  // Feed the batch, then immediately finalize the session so
+  // flush_remainder() processes the trailing right_lookahead window. Without
+  // the finalize, ~chunk_ms + right_lookahead_ms of audio (3 s on default
+  // settings) sit in StreamSession::pending and the terminal <EOU> never
+  // reaches eou_decode_window.
   const int64_t t = measureMs([&] {
     if (cfg_.modelType == ModelType::SORTFORMER) {
       if (diar_session_) {
         diar_session_->feed_pcm_f32(input.data(),
                                     static_cast<int>(input.size()));
+        try { diar_session_->finalize(); } catch (...) {}
       }
     } else {
       if (asr_session_) {
         asr_session_->feed_pcm_f32(input.data(),
                                    static_cast<int>(input.size()));
+        try { asr_session_->finalize(); } catch (...) {}
       }
     }
   });
@@ -697,7 +709,8 @@ std::string ParakeetModel::runStreamingProcess_(const Input& input) {
   streaming_audio_seconds_ +=
       static_cast<double>(input.size()) / static_cast<double>(sample_rate_);
 
-  // Drain segments collected via the streaming callback during the feed.
+  // Drain segments collected via the streaming callback during the feed
+  // (and during the finalize() flush above).
   std::vector<Transcript> drained;
   {
     std::lock_guard<std::mutex> lk(streaming_mutex_);
@@ -725,6 +738,21 @@ std::string ParakeetModel::runStreamingProcess_(const Input& input) {
     if (i > 0) os << sep;
     os << drained[i].text;
   }
+
+  // The session was finalized above, so feed_pcm_f32 would throw on the
+  // next process() call. Reopen a fresh session for the next job; each JS
+  // run() is treated as an independent utterance. State that the
+  // application wants to carry across runs (e.g. live-mic.js's continuous
+  // capture) lives on the JS side as one long-running run() call, so the
+  // C++ side only ever sees one batch per session anyway.
+  closeStreamingSession_();
+  try {
+    openStreamingSession_();
+  } catch (const std::exception& e) {
+    QLOG(logger::Priority::WARNING,
+         std::string("Failed to reopen streaming session: ") + e.what());
+  }
+
   return os.str();
 }
 

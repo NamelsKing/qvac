@@ -17,7 +17,7 @@ In this release, we have replaced the onnxruntime backend with a pure C++/ggml e
 - `runtimeStats()` now returns (`encoderMs`, `decoderMs`, `melSpecMs`, `totalEncodedFrames`) besides existing stats.
 
 ### Added
-- `VadStateChanged` / `EndOfTurn` events surfaced via the same binding callback shape consumers already use.
+- `TranscriptionSegment.isEndOfTurn` boolean field. EOU streaming sessions set this on every segment whose chunk contained an `<EOU>` token, so consumers can detect end-of-turn boundaries independently of segment text. CTC / TDT / Sortformer always leave the field `false`. Replaces the never-fired synthetic `<EOU>` text marker that earlier 0.4.0 builds attempted to surface.
 - Four flag-driven examples that replaced the old per-model quickstart: `examples/transcribe.js` (any GGUF, all engine types), `examples/diarized-transcribe.js` (combined Sortformer + ASR), `examples/live-mic.js` (default-device live transcription via `sox`/`ffmpeg`/`arecord`), and `examples/live-mic-diarized.js`   (live mic with parallel Sortformer + ASR for speaker-tagged transcripts).
 - `scripts/download-models.sh` (downloads upstream NeMo `.nemo`) and `scripts/convert-nemo.sh` (wraps qvac-parakeet.cpp's `convert-nemo-to-gguf.py`); `npm run setup-models` runs both.
 
