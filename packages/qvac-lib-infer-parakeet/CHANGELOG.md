@@ -18,6 +18,7 @@ In this release, we have replaced the onnxruntime backend with a pure C++/ggml e
 
 ### Added
 - `TranscriptionSegment.isEndOfTurn` boolean field. EOU streaming sessions set this on every segment whose chunk contained an `<EOU>` token, so consumers can detect end-of-turn boundaries independently of segment text. CTC / TDT / Sortformer always leave the field `false`. Replaces the never-fired synthetic `<EOU>` text marker that earlier 0.4.0 builds attempted to surface.
+- Long-form audio support for the TDT engine carries over from 0.3.3 (`runEncoderChunked`-style mel-spectrogram windowing) but is now handled natively by the parakeet-cpp engine's `transcribe_samples` / `StreamSession` paths -- no addon-side chunked driver needed.
 - Four flag-driven examples that replaced the old per-model quickstart: `examples/transcribe.js` (any GGUF, all engine types), `examples/diarized-transcribe.js` (combined Sortformer + ASR), `examples/live-mic.js` (default-device live transcription via `sox`/`ffmpeg`/`arecord`), and `examples/live-mic-diarized.js`   (live mic with parallel Sortformer + ASR for speaker-tagged transcripts).
 - `scripts/download-models.sh` (downloads upstream NeMo `.nemo`) and `scripts/convert-nemo.sh` (wraps qvac-parakeet.cpp's `convert-nemo-to-gguf.py`); `npm run setup-models` runs both.
 
@@ -26,6 +27,14 @@ In this release, we have replaced the onnxruntime backend with a pure C++/ggml e
 - `examples/quickstart-{ctc,eou,sortformer,diarized,ggml}.js` and `examples/quickstart.js` (folded into `examples/transcribe.js`).
 - 4 ONNX-specific integration tests (`external-data-staging`, `individual-file-paths`, `named-paths-all-models`, `named-paths-reload`).
 - `DEVELOPMENT.md` (folded into the README's Development section).
+
+## [0.3.3]
+
+This release adds long-form audio support to the Parakeet TDT pipeline. Audio inputs that previously failed against the encoder's static positional-encoding ceilings are now transcribed by streaming the mel-spectrogram through the encoder in overlapping windows.
+
+### Added
+
+- **Long-form audio support for the TDT encoder.** The exported encoder graph has hard-coded positional-encoding length ceilings (a long-range bucket of 9999 frames and a tighter relative bucket of 3000 frames). Inputs longer than ~240s of audio (~24000 mel frames, the binding 3000-frame bucket × 8× subsampling) previously could not be transcribed in a single TDT call. A new `runEncoderChunked` path slides over the mel-spectrogram in ~200s windows with ~20s of shared context, runs the existing encoder per window, trims half of the overlap from each interior boundary so the concatenated output is gap-free and duplicate-free along the time axis, and feeds a single merged `[ENCODER_DIM, T]` buffer to `greedyDecode`. Short audio (≤ one window) keeps the original single-pass path with zero overhead. Cancellation is honored between windows. The chunk/overlap constants are guarded by a compile-time `static_assert` against the encoder's positional-encoding ceiling so future tuning fails to build rather than silently producing invalid windows.
 
 ## [0.3.2]
 

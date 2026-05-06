@@ -55,6 +55,7 @@ import { ModelInfoExecutor } from "../shared/executors/model-info-executor.js";
 import { WrongModelExecutor } from "../shared/executors/wrong-model-executor.js";
 import { ErrorExecutor } from "../shared/executors/error-executor.js";
 import { MobileTranscriptionExecutor } from "./executors/transcription-executor.js";
+import { MobileTranscribeStreamEventsExecutor } from "./executors/transcribe-stream-events-executor.js";
 import { MobileParakeetExecutor } from "./executors/parakeet-executor.js";
 import { MobileVisionExecutor } from "./executors/vision-executor.js";
 import { MobileOcrExecutor } from "./executors/ocr-executor.js";
@@ -68,11 +69,13 @@ import { LifecycleExecutor } from "../shared/executors/lifecycle-executor.js";
 import { ConfigExecutor } from "../shared/executors/config-executor.js";
 
 const resources = new ResourceManager({
-  // Mobile (iOS) needs a tick after each unloadModel for the kernel to
-  // actually release pages — without it, the next test's load arrives
-  // while the previous model's RSS is still resident and crashes the
-  // GGML allocator. Empirically 200ms is enough; desktop doesn't need it.
-  unloadSettleMs: 100,
+  // Mobile (iOS + Android) needs a tick after each unloadModel for the
+  // kernel to actually release pages / reclaim mmap regions — without
+  // it, the next test's load arrives while the previous model's RSS is
+  // still resident and either the GGML allocator crashes (iOS) or
+  // Scudo's mmap fails with "internal map failure" (Android). Empirically
+  // 200ms is enough; desktop doesn't need it.
+  unloadSettleMs: 200,
 });
 
 resources.define("llm", {
@@ -364,12 +367,15 @@ export const executor = createExecutor({
         "ocr-multiple-fonts",
       ], "OCR disabled on iOS (ONNX/CoreML OOM)"),
       new SkipExecutor(/^translation-afriquegemma-/, "AfriqueGemma 4B (~2.7 GB) exceeds iOS memory budget"),
+      // TODO(QVAC-18460): re-enable once iOS transcribe() crash is fixed.
+      new SkipExecutor(/^transcription-/, "TODO(QVAC-18460): transcription disabled on iOS — transcribe() hard-crashes consumer after FFmpegDecoder unload"),
     ] : []),
 
     // Real executors
     new ModelLoadingExecutor(resources),
     new CompletionExecutor(resources),
     new MobileTranscriptionExecutor(resources),
+    new MobileTranscribeStreamEventsExecutor(resources),
     new EmbeddingExecutor(resources),
     new MobileRagExecutor(resources),
     new ModelInfoExecutor(resources),

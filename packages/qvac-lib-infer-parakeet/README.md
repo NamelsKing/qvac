@@ -36,7 +36,7 @@ This library simplifies running NVIDIA Parakeet speech-to-text and Sortformer sp
 - qvac-lib-inference-addon-cpp: C++ addon framework
 - parakeet-cpp (latest): inference engine with GGML dependency
 - Bare Runtime (latest): JavaScript runtime
-- Linux requires Clang/LLVM 19 with libc++
+- Linux requires Clang/LLVM 22 with libc++
 
 ## Installation
 
