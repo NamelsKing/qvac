@@ -288,10 +288,18 @@ private:
   std::string runAsrProcess_(const Input& input);
 
   // ── Streaming session helpers ──────────────────────────────────────────
-  // Opens an ASR or Sortformer streaming session against the loaded engine.
-  // Called from load() when cfg_.streaming == true. The on_segment callback
-  // pushes a Transcript onto pending_streaming_segments_ for the next
-  // process() call to drain into output_ + on_segment_.
+  // Opens an ASR or Sortformer streaming session against the loaded engine
+  // for the LEGACY framework path: called from load() when cfg_.streaming
+  // is true, then runStreamingProcess_() drives it via the framework's
+  // process() callback. The on_segment callback pushes a Transcript onto
+  // pending_streaming_segments_ for the next process() call to drain into
+  // output_ + on_segment_.
+  //
+  // For the duplex path consumed by `runStreaming(...)` see
+  // `createDuplexAsrSession()` / `createDuplexDiarizationSession()` (above)
+  // and `ParakeetStreamingProcessor` (../ParakeetStreamingProcessor.hpp);
+  // those own a separate session per addon instance and queue segments
+  // directly into addonCpp->outputQueue without going through process().
   void openStreamingSession_();
   void closeStreamingSession_();
 

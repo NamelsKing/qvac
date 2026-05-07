@@ -34,7 +34,8 @@ This library simplifies running NVIDIA Parakeet speech-to-text and Sortformer sp
 
 **Dependencies:**
 - qvac-lib-inference-addon-cpp: C++ addon framework
-- parakeet-cpp (latest): inference engine with GGML dependency
+- parakeet-cpp (latest): NVIDIA Parakeet ASR + Sortformer diarization engine
+- ggml-speech (latest): GGML flavour shared with the speech stack; library prefix `qvac-speech-` so it can coexist with the fabric/llm and diffusion ggml builds on the same Android device
 - Bare Runtime (latest): JavaScript runtime
 - Linux requires Clang/LLVM 22 with libc++
 
@@ -67,7 +68,7 @@ First, make sure you have the prerequisites from the [Installation](#installatio
 #### System Requirements
 
 **Supported Platforms:**
-- **Linux** (x64, ARM64) -- requires Clang/LLVM 19 with libc++
+- **Linux** (x64, ARM64) -- requires Clang/LLVM 22 with libc++
 - **macOS** (x64, ARM64)
 - **Windows** (x64)
 
@@ -77,7 +78,7 @@ First, make sure you have the prerequisites from the [Installation](#installatio
 - **CMake** (>= 3.25)
 - **Git**
 - **C++ Compiler** with C++20 support
-  - Linux: Clang 19+ with libc++
+  - Linux: Clang 22+ with libc++
   - macOS: Xcode 12+ (provides Clang 12+)
   - Windows: Visual Studio 2019+ or MinGW-w64
 
@@ -96,7 +97,7 @@ export VCPKG_ROOT=$(pwd)
 
 **Linux:**
 ```bash
-# Ubuntu/Debian -- includes Clang 19 and libc++ required by the native addon
+# Ubuntu/Debian -- includes Clang 22 and libc++ required by the native addon
 sudo apt update
 sudo apt install clang libc++-dev libc++abi-dev build-essential cmake git pkg-config
 ```
@@ -114,7 +115,7 @@ brew install cmake git
 
 #### GPU Acceleration (Optional)
 
-GPU backends are selected at vcpkg install time via the `parakeet-cpp[metal|vulkan|opencl]` features. The bundled ggml inside the `parakeet-cpp` port handles backend wiring; runtime falls back to CPU if the chosen backend doesn't initialise.
+GPU backends are selected at vcpkg install time via the `parakeet-cpp[metal|vulkan|opencl]` features, which forward to the matching `ggml-speech[...]` features. The `ggml-speech` port is a separate dependency from `parakeet-cpp` (it's the speech-stack flavour of ggml, with the `qvac-speech-` library prefix so it can coexist with the fabric/llm and diffusion ggml flavours on the same Android device); runtime falls back to CPU if the chosen backend doesn't initialise.
 
 - **Metal (macOS/iOS):** automatic; no setup required.
 - **Vulkan (Linux/Windows/Android):** install the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) and ensure GPU drivers support Vulkan 1.1+.
@@ -211,6 +212,8 @@ Most users interact with the package through `index.js`. From that entrypoint we
 | | `streamingHistoryMs` | Sortformer rolling-history window in ms (default: 30000) |
 | | `streamingEmitPartials` | Emit partials before chunk boundaries (default: `true`) |
 | | `streamingEnergyVad` | CTC/TDT energy-VAD events (default: `false`) |
+| | `streamingLeftContextMs` | ASR encoder left-context window in ms; `-1` keeps parakeet-cpp's default of 10000. ASR sessions only (Sortformer ignores it). |
+| | `streamingRightLookaheadMs` | ASR encoder right-lookahead window in ms; `-1` keeps parakeet-cpp's default of 2000. Adds directly to the per-segment latency floor (`chunk_ms + right_lookahead_ms`). ASR sessions only. |
 
 The model type (CTC / TDT / EOU / Sortformer) is **auto-detected from the GGUF metadata**, so callers don't need to pass `modelType`. Other knobs (`captionEnabled`, `timestampsEnabled`, `seed`, `sampleRate`, `channels`) keep sensible defaults.
 
@@ -252,9 +255,9 @@ try {
 
 ### 5. Run Inference
 
-Pass an audio stream (e.g. from `bare-fs.createReadStream` or a live PCM buffer) to `run()`. Audio must be **16 kHz mono**, either Float32 or signed 16-bit little-endian PCM.
+Pass an audio stream (e.g. from `bare-fs.createReadStream` or a live PCM buffer) to either `run()` (offline / batched) or `runStreaming()` (duplex / live). Audio must be **16 kHz mono**, either Float32 or signed 16-bit little-endian PCM.
 
-There are two ways to receive transcription results:
+There are three ways to receive transcription results:
 
 #### Option 1: Real-time streaming with `onUpdate()`
 
@@ -267,7 +270,15 @@ try {
 
   await response
     .onUpdate(segments => {
-      // `segments` is `Array<{ text, start, end, toAppend, id }>`
+      // `segments` is `TranscriptionSegment[]`:
+      //   { text, start, end, toAppend, id?, isEndOfTurn?, startsWord? }
+      // - `isEndOfTurn` is true on EOU streaming chunks where the
+      //   model fired the `<EOU>` token; CTC / TDT / Sortformer
+      //   always leave it false.
+      // - `startsWord` is true when the segment begins a new
+      //   SentencePiece word (`▁`-marker token); concat verbatim
+      //   when false to rejoin chunk-boundary wordpiece splits like
+      //   ["pun", "ctuation"] -> "punctuation".
       for (const seg of segments) console.log(seg.text)
     })
     .await()
@@ -275,6 +286,11 @@ try {
   console.error('Transcription failed:', error)
 }
 ```
+
+`run()` buffers the entire audio stream in JS memory and dispatches one
+job at end-of-stream, so segments only surface after the whole input is
+consumed. For latencies bound by `chunk_ms + right_lookahead_ms` rather
+than by total audio length, use `runStreaming()` (Option 3 below).
 
 #### Option 2: Complete result with `iterate()`
 
@@ -285,11 +301,65 @@ for await (const chunk of response.iterate()) {
 }
 ```
 
-**Key differences:**
-- `onUpdate()` -- segments arrive as the engine produces them (chunk by chunk for the streaming session, or as the offline encoder fires its callback).
-- `iterate()` -- collects all segments after the job finishes.
+#### Option 3: Duplex streaming with `runStreaming()`
 
-For Sortformer GGUFs, the same `Output` event carries `Speaker N: HH:MM:SS - HH:MM:SS` text per segment instead of an ASR transcript -- see `examples/diarized-transcribe.js` for parsing.
+For live-mic and other low-latency use cases, `runStreaming()` opens a
+long-lived `parakeet::StreamSession` (or `SortformerStreamSession`) on
+the C++ side and feeds each pushed chunk straight in -- bypassing the
+`run()` path's batch-then-process lifecycle. Per-chunk segments surface
+through the regular `onUpdate(...)` channel as soon as the engine
+emits them. The session stays open across chunks, so the rolling
+encoder context, EOU detector, and Sortformer speaker history are all
+preserved (no chunk-boundary state resets).
+
+```javascript
+// Construct with `streaming: true` so the addon configures the
+// duplex-friendly defaults at load time:
+const model = new TranscriptionParakeet({
+  files: { model: './models/parakeet-tdt-0.6b-v3.q8_0.gguf' },
+  config: {
+    parakeetConfig: {
+      streaming: true,
+      streamingChunkMs: 2000,
+      useGPU: true
+    }
+  }
+})
+await model.load()
+
+// Provide an async-iterable of Buffer / Float32Array chunks. The
+// example uses a small `pushableStream()` helper from
+// `examples/utils.js` that lets you `.push(chunk)` from any sync
+// callback (e.g. `child_process.stdout.on('data', ...)`) and `.end()`
+// when capture is done.
+const audio = pushableStream()
+captureProcess.stdout.on('data', chunk => audio.push(chunk))
+captureProcess.on('exit', () => audio.end())
+
+const response = await model.runStreaming(audio, {
+  // optional per-call overrides; omitted fields fall back to the
+  // matching `parakeetConfig.streaming*` value used at load time
+  chunkMs: 2000
+})
+
+await response
+  .onUpdate(segments => {
+    for (const seg of segments) {
+      if (seg.isEndOfTurn) console.log('--- end of turn ---')
+      else console.log(seg.text)
+    }
+  })
+  .await()
+```
+
+The new lower-level entry points (`startStreaming` / `appendStreamingAudio` / `endStreaming` / `cancelStreaming`) are exposed on the `ParakeetInterface` (`parakeet.js`) for callers that want to drive the session manually; `runStreaming` is the high-level wrapper that takes an async-iterable, opens the session, pumps chunks, and synthesises a `JobEnded` when the iterable completes.
+
+**Key differences:**
+- `onUpdate()` on `run()` -- one batch of segments after the entire input has been buffered.
+- `iterate()` on `run()` -- collects all segments after the job finishes.
+- `onUpdate()` on `runStreaming()` -- segments arrive as the engine produces them, with stable session state across chunks. Default for live-mic.
+
+For Sortformer GGUFs, the `Output` event carries `Speaker N: HH:MM:SS - HH:MM:SS` text per segment instead of an ASR transcript -- see `examples/diarized-transcribe.js` for offline parsing and `examples/live-mic-diarized.js` for the streaming flow.
 
 ### 6. Release Resources
 
@@ -311,7 +381,7 @@ cd qvac/packages/qvac-lib-infer-parakeet
 npm install
 ```
 
-`npm install` pulls the `parakeet-cpp` overlay port (which bundles ggml at the pinned upstream commit) and produces `prebuilds/<platform>-<arch>/qvac__transcription-parakeet.bare`.
+`npm install` pulls the `parakeet-cpp` and `ggml-speech` overlay ports (the speech-stack ggml flavour, with the `qvac-speech-` library prefix) and produces `prebuilds/<platform>-<arch>/qvac__transcription-parakeet.bare`.
 
 ### 2. Stage a model
 

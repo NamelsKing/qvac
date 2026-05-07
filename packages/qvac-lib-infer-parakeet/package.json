@@ -35,7 +35,6 @@
     "example:diarize": "bare examples/diarized-transcribe.js",
     "example:mic": "bare examples/live-mic.js",
     "example:mic-diarize": "bare examples/live-mic-diarized.js",
-    "example:real": "bare examples/test-real-audio.js",
     "prepare:husky": "husky"
   },
   "files": [

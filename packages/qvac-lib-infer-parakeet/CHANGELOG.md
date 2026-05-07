@@ -7,25 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0]
 
-In this release, we have replaced the onnxruntime backend with a pure C++/ggml engine.
+In this release, we have replaced the onnxruntime backend with a pure C++/ggml engine, added a duplex-streaming entry point that bypasses the framework's batch-then-process lifecycle for live use cases, and surfaced two new per-segment signals (`isEndOfTurn`, `startsWord`) so consumers can build cleaner live transcripts.
 
 ### Changed (BREAKING for model files)
-- Replaced the onnxruntime backend parakeet-cpp backend. The native addon no longer ships ONNX Runtime; ggml is statically linked at the parakeet-cpp port level.
+- Replaced the onnxruntime backend with the parakeet-cpp backend. The native addon no longer ships ONNX Runtime; the ggml dependency is now provided by the dedicated `ggml-speech` vcpkg port (separate from the `parakeet-cpp` port itself), with a `qvac-speech-` library prefix so it can coexist with the fabric/llm `qvac-` and the diffusion `qvac-diffusion-` ggml flavours on the same Android device.
 - Models now load from a single `.gguf` file per checkpoint instead of the legacy multi-file ONNX layout. Tokenizer + hyperparameters travel inside the GGUF metadata; no side-loaded files.
 - `loadWeights({ filename, chunk, completed })` now expects a single `.gguf` filename. Non-`.gguf` filenames are ignored with a warning for back-compat with callers still iterating an ONNX file list.
-- `Engine::transcribe_stream` and `StreamSession` are wired through the new backend; existing   `is_eou_boundary` + `eot_confidence` slots on `StreamingSegment`   now reflect parakeet-cpp's native EOU `<EOU>` token detection.
+- `Engine::transcribe_stream` and `StreamSession` are wired through the new backend; existing `is_eou_boundary` + `eot_confidence` slots on `StreamingSegment` now reflect parakeet-cpp's native EOU `<EOU>` token detection.
 - `runtimeStats()` now returns (`encoderMs`, `decoderMs`, `melSpecMs`, `totalEncodedFrames`) besides existing stats.
 
 ### Added
+- **Duplex streaming entry point.** `TranscriptionParakeet.runStreaming(audioStream, streamingConfig?)` opens a long-lived `parakeet::StreamSession` (or `SortformerStreamSession`) on the C++ side and feeds each pushed chunk straight in -- bypassing the `run()` path's append-buffer-then-process lifecycle. Per-chunk segments surface through the regular `onUpdate(...)` channel as soon as the engine emits them, with full streaming session state (rolling encoder context, EOU detector, Sortformer history) preserved across chunks. The lower-level `startStreaming` / `appendStreamingAudio` / `endStreaming` / `cancelStreaming` methods are exposed on `ParakeetInterface` for callers that want to drive the session manually. New `StreamingRunConfig` type for per-call `chunkMs` / `historyMs` / `leftContextMs` / `rightLookaheadMs` / `emitPartials` / `emitEnergyVad` overrides.
+- **C++ `ParakeetStreamingProcessor`** (mirrors qvac-lib-infer-whispercpp's `StreamingProcessor`): a worker-thread-driven class that owns the duplex session lifetime, drains audio from a `pending_` queue under `mtx_+cv_`, calls `feed_pcm_f32` directly, and queues per-segment `Transcript`s into `addonCpp->outputQueue` so the JS `onUpdate` channel surfaces them with no batching. New binding entry points wire in via `qvac_lib_infer_parakeet::{startStreaming,appendStreamingAudio,endStreaming,cancelWithStreaming,destroyInstanceWithStreaming}` in `AddonJs.hpp`.
 - `TranscriptionSegment.isEndOfTurn` boolean field. EOU streaming sessions set this on every segment whose chunk contained an `<EOU>` token, so consumers can detect end-of-turn boundaries independently of segment text. CTC / TDT / Sortformer always leave the field `false`. Replaces the never-fired synthetic `<EOU>` text marker that earlier 0.4.0 builds attempted to surface.
+- `TranscriptionSegment.startsWord` boolean field. Forwarded from the upstream `parakeet::StreamingSegment::starts_word` flag, which is set true when the segment's first token is a SentencePiece word-start (the piece begins with the `▁` U+2581 marker). Streaming consumers building a running transcript can use it to gate the inserted separator: concatenate verbatim when `startsWord === false` to rejoin chunk-boundary wordpiece splits like `["pun", "ctuation"]` into `"punctuation"` instead of `"pun ctuation"`. Default `true` so callers that ignore it see no behaviour change.
+- `streamingLeftContextMs` and `streamingRightLookaheadMs` config knobs. Forwarded to `parakeet::StreamingOptions::left_context_ms` / `right_lookahead_ms`. ASR sessions only (Sortformer ignores them). `-1` keeps parakeet-cpp's defaults (10000 / 2000 ms). `right_lookahead_ms` adds directly to the per-segment latency floor; tune lower for snappier live transcripts at the cost of chunk-boundary accuracy.
 - Long-form audio support for the TDT engine carries over from 0.3.3 (`runEncoderChunked`-style mel-spectrogram windowing) but is now handled natively by the parakeet-cpp engine's `transcribe_samples` / `StreamSession` paths -- no addon-side chunked driver needed.
-- Four flag-driven examples that replaced the old per-model quickstart: `examples/transcribe.js` (any GGUF, all engine types), `examples/diarized-transcribe.js` (combined Sortformer + ASR), `examples/live-mic.js` (default-device live transcription via `sox`/`ffmpeg`/`arecord`), and `examples/live-mic-diarized.js`   (live mic with parallel Sortformer + ASR for speaker-tagged transcripts).
+- Four flag-driven examples that replaced the old per-model quickstart: `examples/transcribe.js` (any GGUF, all engine types), `examples/diarized-transcribe.js` (combined Sortformer + ASR), `examples/live-mic.js` (default-device live transcription via `sox`, now using `runStreaming` for sub-second latency), and `examples/live-mic-diarized.js` (live mic with parallel Sortformer + ASR for speaker-tagged transcripts).
 - `scripts/download-models.sh` (downloads upstream NeMo `.nemo`) and `scripts/convert-nemo.sh` (wraps qvac-parakeet.cpp's `convert-nemo-to-gguf.py`); `npm run setup-models` runs both.
+- `test/integration/eou-streaming.test.js` covering the EOU streaming session's `isEndOfTurn` boundary detection.
+- English-CTC accuracy assertion in `test/integration/accuracy-multilang.test.js` (was previously TDT/EOU only); WER coverage for all three ASR heads now lives there.
 
 ### Removed
 - `@qvac/onnx` peer dependency; `eigen3`, `qvac-onnx` cmake config, ONNX file-name lists in `examples/utils.js`.
 - `examples/quickstart-{ctc,eou,sortformer,diarized,ggml}.js` and `examples/quickstart.js` (folded into `examples/transcribe.js`).
 - 4 ONNX-specific integration tests (`external-data-staging`, `individual-file-paths`, `named-paths-all-models`, `named-paths-reload`).
+- `test/integration/addon.test.js` (legacy generic addon-lifecycle integration test; superseded by `addon-multimodel.test.js` and `eou-streaming.test.js`).
 - `DEVELOPMENT.md` (folded into the README's Development section).
 
 ## [0.3.3]
