@@ -93,31 +93,44 @@ void ParakeetStreamingProcessor::appendAudio(std::vector<float>&& samples) {
 }
 
 void ParakeetStreamingProcessor::end() {
+  bool should_signal = false;
   {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (ended_ || cancelled_) return;
-    ended_ = true;
+    if (!ended_ && !cancelled_) {
+      ended_        = true;
+      should_signal = true;
+    }
   }
-  cv_.notify_all();
-  if (thread_.joinable()) thread_.join();
+  if (should_signal) cv_.notify_all();
+  // join() runs at most once across end() / cancel() / dtor's cancel(),
+  // even when they race on different threads. Without this guard the
+  // loser observed thread_.joinable() == true and called join() on an
+  // already-joined thread, raising std::system_error.
+  std::call_once(teardown_once_, [this] {
+    if (thread_.joinable()) thread_.join();
+  });
 }
 
 void ParakeetStreamingProcessor::cancel() {
+  bool should_signal = false;
   {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (cancelled_) {
-      if (thread_.joinable()) thread_.join();
-      return;
+    if (!cancelled_) {
+      cancelled_    = true;
+      should_signal = true;
     }
-    cancelled_ = true;
   }
-  try {
-    if (asr_session_)  asr_session_->cancel();
-    if (diar_session_) diar_session_->cancel();
-  } catch (...) {
+  if (should_signal) {
+    try {
+      if (asr_session_)  asr_session_->cancel();
+      if (diar_session_) diar_session_->cancel();
+    } catch (...) {
+    }
+    cv_.notify_all();
   }
-  cv_.notify_all();
-  if (thread_.joinable()) thread_.join();
+  std::call_once(teardown_once_, [this] {
+    if (thread_.joinable()) thread_.join();
+  });
 }
 
 void ParakeetStreamingProcessor::onAsrSegment_(

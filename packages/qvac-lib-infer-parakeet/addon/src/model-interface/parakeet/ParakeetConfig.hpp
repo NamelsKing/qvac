@@ -27,10 +27,19 @@ struct ParakeetConfig {
   // (StreamSession for ASR, SortformerStreamSession for diarization) at
   // load() time and routes each process() call through feed_pcm_f32(). The
   // session retains state (KV cache for ASR Mode 3, rolling speaker history
-  // for Sortformer) across appends, so:
+  // for Sortformer) across appends, so within a single run() call:
   //   - Sortformer speaker IDs stay stable from chunk to chunk.
   //   - EOU `<EOU>` boundaries surface as segment markers (and StreamEvents).
   //   - Optional energy-VAD events fire for CTC/TDT.
+  // Cross-call scope: a single run() invocation batches all of its append()
+  // chunks into one process() call (see runStreamingProcess_), so cross-chunk
+  // state is preserved within that run. Each NEW run() on the same model
+  // instance starts a fresh streaming session: speaker history, EOU window,
+  // and partial decode state do NOT carry over. For continuous live capture,
+  // either feed a single long-running run() from a pushable stream, or use
+  // the duplex `runStreaming()` API (ParakeetStreamingProcessor) which owns
+  // a single long-lived session for the lifetime of one runStreaming() call
+  // regardless of how many append-style chunks it ingests.
   // Off by default for batch-style transcription.
   bool streaming             = false;
   int  streamingChunkMs      = 2000;

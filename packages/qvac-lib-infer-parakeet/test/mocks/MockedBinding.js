@@ -159,12 +159,21 @@ class MockedBinding {
 
   endStreaming (handle) {
     if (handle !== this._handle) throw new Error('Invalid handle')
-    if (!this._streamingActive) return false
+    if (!this._streamingActive) {
+      return { cleaned: false, audioDurationMs: 0, totalSamples: 0 }
+    }
+    const samplesFed = this._streamingLog.appended *
+      (this._streamingConfig?.sampleRate || 16000) *
+      (this._streamingConfig?.chunkMs || 1000) / 1000
     this._streamingActive = false
     this._streamingChunkIndex = 0
     this._streamingConfig = null
     this._streamingLog.ends++
-    return true
+    return {
+      cleaned: true,
+      audioDurationMs: samplesFed > 0 ? samplesFed / 16 : 0,
+      totalSamples: Math.round(samplesFed)
+    }
   }
 
   status (handle) {

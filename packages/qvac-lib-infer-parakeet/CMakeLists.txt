@@ -62,8 +62,6 @@ set(LIB_SRCS
         ${LIB_SRCS_PATH}/parakeet/ParakeetModel.cpp
         ${LIB_SRCS_PATH}/parakeet/ParakeetConfig.hpp
         ${LIB_SRCS_PATH}/parakeet/ParakeetConfig.cpp
-        ${LIB_SRCS_PATH}/parakeet/ParakeetHandlers.hpp
-        ${LIB_SRCS_PATH}/parakeet/ParakeetHandlers.cpp
         ${PROJECT_SOURCE_DIR}/addon/src/js-interface/JSAdapter.hpp
         ${PROJECT_SOURCE_DIR}/addon/src/js-interface/JSAdapter.cpp
 )

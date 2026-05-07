@@ -36,6 +36,16 @@ declare interface ParakeetConfig {
    * IDs stay stable across appends, EOU `<EOU>` boundaries surface
    * as segment markers, and CTC/TDT can opt into energy-VAD events.
    * Default: false (offline `transcribe_samples` / `diarize_samples`).
+   *
+   * Scope: cross-append streaming state (speaker history, EOU rolling
+   * window, partial decode state) is preserved within a single `run()`
+   * call -- the JS `append()` layer batches all audio for a job into
+   * one `process()` invocation. State does NOT survive across separate
+   * `run()` calls on the same model instance; each new `run()` starts
+   * a fresh streaming session. For continuous live capture, either
+   * drive a single long-running `run()` from a pushable stream, or use
+   * the duplex `runStreaming()` API which owns one parakeet streaming
+   * session for the lifetime of the call.
    */
   streaming?: boolean
   /** Streaming chunk cadence in milliseconds (default: 2000) */
@@ -264,7 +274,7 @@ declare namespace TranscriptionParakeet {
    *   0 = CPU       (no GPU compiled in, useGPU=false, or GPU init refused)
    *   1 = Metal     (macOS / iOS)
    *   2 = CUDA      (NVIDIA)
-   *   3 = Vulkan    (cross-platform GPU; not yet enabled in qvac-lib-infer-parakeet)
+   *   3 = Vulkan    (cross-platform GPU; enabled on Linux / Windows / Android via parakeet-cpp[vulkan])
    *   4 = OpenCL    (Adreno on Android)
    *  99 = other     (a future / unrecognised backend)
    */

@@ -251,9 +251,17 @@ test('endStreaming on a binding with no active session is a no-op', async (t) =>
 
   // Drive the lower-level entry point directly -- this is what the
   // streaming-aware destroyInstance / cancel paths fall back to.
+  // The C++ wrapper now returns { cleaned, audioDurationMs, totalSamples }
+  // so JS can populate the synthetic JobEnded payload with the audio
+  // duration captured by ParakeetStreamingProcessor; with no active
+  // session, `cleaned` is false and the timing fields are zero.
   const result = model._mockedBinding.endStreaming(model.addon._handle)
-  t.is(result, false,
-    'Mock returns false when no session is active (matches the C++ wrapper contract)')
+  t.is(typeof result, 'object',
+    'Mock returns the same { cleaned, audioDurationMs, totalSamples } shape as the C++ wrapper')
+  t.is(result.cleaned, false,
+    'cleaned is false when no streaming session was active')
+  t.is(result.audioDurationMs, 0, 'no session = no audio observed')
+  t.is(result.totalSamples, 0, 'no session = no samples observed')
 
   await model.addon.destroyInstance()
 })

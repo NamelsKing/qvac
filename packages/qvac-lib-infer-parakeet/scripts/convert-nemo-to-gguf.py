@@ -131,7 +131,18 @@ def ensure_ckpt(path: Path, hf_repo: str) -> Path:
     if path.exists():
         return path
     print(f"[convert] {path} missing, downloading {hf_repo} from Hugging Face...", file=sys.stderr)
-    from huggingface_hub import hf_hub_download
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        raise SystemExit(
+            f"[convert] huggingface_hub is not installed but {path} is missing.\n"
+            "  Either:\n"
+            "    1. Run 'npm run setup-models' / 'scripts/download-models.sh' "
+            "(the documented path; uses curl, no Python deps), or\n"
+            "    2. Install it manually: 'python -m pip install huggingface_hub'.\n"
+            "  huggingface_hub is intentionally not in scripts/requirements.txt "
+            "because download-models.sh is the supported entry point."
+        )
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     cache = path.parent / "hf-cache"
     cache.mkdir(parents=True, exist_ok=True)

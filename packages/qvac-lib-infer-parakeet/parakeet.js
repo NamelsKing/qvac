@@ -101,23 +101,29 @@ class ParakeetInterface {
 
   _addonOutputCallback (addon, event, data, error) {
     const isError = typeof error === 'string' && error.length > 0
-    const isStats = data && typeof data === 'object' && (
-      'totalTime' in data ||
-      'audioDurationMs' in data ||
-      'totalSamples' in data
-    )
-    const isTranscriptOutput = (
-      Array.isArray(data) ||
-      (data && typeof data === 'object' && typeof data.text === 'string')
-    )
+    const eventStr = typeof event === 'string' ? event : String(event)
 
     let mappedEvent = event
-    if (event === 'Error' || isError || String(event).includes('Error')) {
+    if (eventStr === 'Error' || eventStr === 'JobEnded' || eventStr === 'Output') {
+      mappedEvent = eventStr
+    } else if (isError || eventStr.includes('Error')) {
       mappedEvent = 'Error'
-    } else if (event === 'JobEnded' || isStats || String(event).includes('RuntimeStats')) {
+    } else if (eventStr.includes('RuntimeStats')) {
       mappedEvent = 'JobEnded'
-    } else if (event === 'Output' || isTranscriptOutput || String(event).includes('Output')) {
+    } else if (eventStr.includes('Output')) {
       mappedEvent = 'Output'
+    } else {
+      const isStats = data && typeof data === 'object' && (
+        'totalTime' in data ||
+        'audioDurationMs' in data ||
+        'totalSamples' in data
+      )
+      const isTranscriptOutput = (
+        Array.isArray(data) ||
+        (data && typeof data === 'object' && typeof data.text === 'string')
+      )
+      if (isStats) mappedEvent = 'JobEnded'
+      else if (isTranscriptOutput) mappedEvent = 'Output'
     }
 
     const isTerminal = mappedEvent === 'Error' || mappedEvent === 'JobEnded'
@@ -244,7 +250,14 @@ class ParakeetInterface {
   }
 
   /**
-   * Get current model status
+   * Get current model status (JS-side state-machine value).
+   *
+   * NOTE: returns the JavaScript-tracked state of this addon wrapper, not
+   * a native query into qvac-lib-inference-addon-cpp -- the framework does
+   * not surface a `status` RPC and `binding.cpp` does not export
+   * `JsInterface::status`. Values reflect transitions driven by this
+   * wrapper itself (`listening` / `processing` / `idle` / `paused` /
+   * `stopped` / `loading`).
    * @returns {Promise<string>} - 'loading', 'listening', 'processing', 'idle', 'paused', 'stopped'
    */
   async status () {
@@ -256,7 +269,12 @@ class ParakeetInterface {
   }
 
   /**
-   * Pause processing
+   * Pause processing.
+   *
+   * NOTE: JS-side bookkeeping only. Flips the wrapper's state machine to
+   * `'paused'` but does NOT signal the native engine -- there is no
+   * `JsInterface::pause` export. Use `cancel()` (or `stop()`) if you need
+   * the active inference call to actually abort.
    * @returns {Promise<void>}
    */
   async pause () {
@@ -491,20 +509,27 @@ class ParakeetInterface {
     try {
       if (this._activeJobId === null) return
       const jobId = this._activeJobId
-      this._binding.endStreaming(this._handle)
+      // The native cleanupStreamingSession returns
+      // { cleaned, audioDurationMs, totalSamples } captured right before
+      // the worker thread joined, so the synthetic JobEnded below carries
+      // the actual audio duration / sample count instead of zeros. The
+      // C++ binding reads them off ParakeetStreamingProcessor::audioSeconds
+      // (joined-worker, race-free at this point).
+      const teardown = this._binding.endStreaming(this._handle) || {}
       // The native StreamingProcessor doesn't emit a synthetic JobEnded
       // (the addon framework's runtimeStats path is bypassed entirely),
       // so the JS-side state machine has to mark the job as finished
       // manually. We pretend a regular JobEnded landed: clear the
-      // active job, push a JobEnded event with empty stats so the
-      // public TranscriptionParakeet response resolves.
+      // active job, push a JobEnded event with the stats we just
+      // recovered so the public TranscriptionParakeet response resolves
+      // with a non-zero `audioDurationMs` / `totalSamples` payload.
       this._activeJobId = null
       this._setState(state.LISTENING)
       if (this._outputCallback) {
         this._outputCallback(this, 'JobEnded', jobId, {
           totalTime: 0,
-          audioDurationMs: 0,
-          totalSamples: 0
+          audioDurationMs: typeof teardown.audioDurationMs === 'number' ? teardown.audioDurationMs : 0,
+          totalSamples: typeof teardown.totalSamples === 'number' ? teardown.totalSamples : 0
         }, null)
       }
     } catch (error) {

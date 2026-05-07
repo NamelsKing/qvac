@@ -171,7 +171,7 @@ npm run setup-models -- -t eou -q f16      # full-precision EOU
 
 `setup-models` chains `setup-venv` -> `download-models` -> `convert-models`. The venv step is idempotent (skipped if `./venv` already has the required interpreter), so re-running `setup-models` after a successful first run only re-checks the downloads and conversions.
 
-Output GGUFs land in `./models/`. The conversion is driven by `scripts/convert-nemo-to-gguf.py` (vendored from `qvac-parakeet.cpp`; resync on bump) and runs against the local `./venv`. The venv only needs `gguf`, `numpy`, `torch`, and `pyyaml` -- the converter reads the `.nemo` archive directly via `tarfile` + `torch.load` and does **not** depend on the heavy `nemo_toolkit` package despite the file extension. Full requirement list lives at `scripts/requirements.txt`. To use a pre-existing interpreter instead of `./venv`, pass `--python /path/to/python` to either script (or set `PYTHON=...`).
+Output GGUFs land in `./models/`. The conversion is driven by `scripts/convert-nemo-to-gguf.py` (vendored from `qvac-parakeet.cpp`; resync on bump) and runs against the local `./venv`. The venv needs `gguf`, `numpy`, `torch`, `pyyaml`, and `sentencepiece` -- the converter reads the `.nemo` archive directly via `tarfile` + `torch.load` and does **not** depend on the heavy `nemo_toolkit` package despite the file extension. `sentencepiece` is required to decode the model's `tokenizer.model` proto into the GGUF's token / score / type arrays (without it, transcription output ends up as raw token IDs). Full requirement list lives at `scripts/requirements.txt`. To use a pre-existing interpreter instead of `./venv`, pass `--python /path/to/python` to either script (or set `PYTHON=...`).
 
 The three underlying scripts are also flag-driven if you want to run them separately:
 
@@ -207,7 +207,7 @@ Most users interact with the package through `index.js`. From that entrypoint we
 | `files` | `model` | Absolute or relative path to the `.gguf` checkpoint |
 | `config.parakeetConfig` | `maxThreads` | CPU threads; `0` lets the engine pick `hardware_concurrency` |
 | | `useGPU` | Enable the linked ggml GPU backend (default: `false`) |
-| | `streaming` | Open a long-lived `StreamSession` / `SortformerStreamSession` so speaker IDs stay stable across appends and EOU `<EOU>` boundaries surface as segments. Default: `false` (offline `transcribe_samples` / `diarize_samples`). |
+| | `streaming` | Open a long-lived `StreamSession` / `SortformerStreamSession` so speaker IDs stay stable across appends and EOU `<EOU>` boundaries surface as segments. Cross-append state is preserved only within a single `run()` call -- separate `run()` invocations on the same instance start a fresh session. For continuous live capture, drive a single long-running `run()` from a pushable stream, or use the duplex `runStreaming()` API which owns one streaming session for the lifetime of the call. Default: `false` (offline `transcribe_samples` / `diarize_samples`). |
 | | `streamingChunkMs` | Streaming chunk cadence in ms (default: 2000) |
 | | `streamingHistoryMs` | Sortformer rolling-history window in ms (default: 30000) |
 | | `streamingEmitPartials` | Emit partials before chunk boundaries (default: `true`) |
@@ -256,6 +256,8 @@ try {
 ### 5. Run Inference
 
 Pass an audio stream (e.g. from `bare-fs.createReadStream` or a live PCM buffer) to either `run()` (offline / batched) or `runStreaming()` (duplex / live). Audio must be **16 kHz mono**, either Float32 or signed 16-bit little-endian PCM.
+
+> **Buffer cap (`run()` only):** the JS layer batches every chunk for a single `run()` call into one native `process()` invocation. Total buffered audio per call is capped at **500 MiB** (`MAX_BUFFERED_BYTES` in `parakeet.js`); exceeding it raises `BUFFER_LIMIT_EXCEEDED`. At 16 kHz mono int16, that's roughly 4 hours of continuous audio. For longer single-session captures, use `runStreaming()` (no per-call buffer cap -- audio is fed straight to the engine as it arrives) or split into sequential `run()` calls.
 
 There are three ways to receive transcription results:
 

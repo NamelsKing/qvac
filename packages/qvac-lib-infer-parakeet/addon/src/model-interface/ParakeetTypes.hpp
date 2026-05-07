@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace qvac_lib_infer_parakeet {
@@ -110,10 +109,6 @@ struct DiarizationConfig {
   float minDurationOff = 0.296f;
   int medianWindow = 11;
 };
-
-// JS value variant type for config parsing
-using JSValueVariant =
-    std::variant<bool, int32_t, int64_t, float, double, std::string>;
 
 } // namespace qvac_lib_infer_parakeet
 

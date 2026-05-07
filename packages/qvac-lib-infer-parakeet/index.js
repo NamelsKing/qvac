@@ -32,6 +32,12 @@ class TranscriptionParakeet {
    * @param {boolean} [opts.config.parakeetConfig.streaming=false] - Open a long-lived
    *   StreamSession / SortformerStreamSession at load time so speaker IDs stay
    *   stable across appends and EOU `<EOU>` boundaries surface as segments.
+   *   Cross-append state (speaker history, EOU rolling window, partial decode
+   *   state) survives only within a single `run()` call -- it does NOT persist
+   *   across separate `run()` calls on the same instance. For live continuous
+   *   capture, drive a single long-running `run()` from a pushable stream, or
+   *   use {@link TranscriptionParakeet#runStreaming} which owns one parakeet
+   *   streaming session for the entire call regardless of append count.
    * @param {number} [opts.config.parakeetConfig.streamingChunkMs=2000] - Streaming chunk cadence
    * @param {number} [opts.config.parakeetConfig.streamingHistoryMs=30000] - Sortformer rolling history
    * @param {boolean} [opts.config.parakeetConfig.streamingEmitPartials=true] - Emit partial segments
@@ -201,7 +207,15 @@ class TranscriptionParakeet {
   async _runInternal (audioStream) {
     const response = this._job.start()
 
-    this._handleAudioStream(this._normalizeAudioStream(audioStream)).catch((error) => {
+    let normalized
+    try {
+      normalized = this._normalizeAudioStream(audioStream)
+    } catch (error) {
+      this._job.fail(error)
+      throw error
+    }
+
+    this._handleAudioStream(normalized).catch((error) => {
       this._job.fail(error)
     })
 
@@ -211,7 +225,13 @@ class TranscriptionParakeet {
   async _runStreamingInternal (audioStream, streamingConfig) {
     const normalized = this._normalizeAudioStream(audioStream)
     const response = this._job.start()
-    await this.addon.startStreaming(streamingConfig || {})
+
+    try {
+      await this.addon.startStreaming(streamingConfig || {})
+    } catch (error) {
+      this._job.fail(error)
+      throw error
+    }
 
     this._pumpStreamingAudio(normalized).catch((error) => {
       this.addon.endStreaming().catch(() => {})

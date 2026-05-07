@@ -77,6 +77,11 @@ public:
   // chunk's segments are flushed via the on-segment callback before the
   // session is torn down on unload(). For offline mode this is just a
   // flag flip.
+  //
+  // SCOPE: framework path only. The duplex `runStreaming()` path
+  // (ParakeetStreamingProcessor) owns its own parakeet streaming session
+  // and never calls endOfStream() / sets stream_ended_. Consumers must
+  // not gate their cleanup on `isStreamEnded()` after `runStreaming()`.
   void endOfStream();
   bool isStreamEnded() const { return stream_ended_; }
   bool isLoaded() const { return is_loaded_; }
@@ -147,6 +152,11 @@ public:
   void setOnSegmentCallback(const OutputCallback& callback) {
     on_segment_ = callback;
   }
+  // TEST-ONLY hook: directly append a Transcript to output_ so unit
+  // tests can exercise the framework's drainage path without driving a
+  // real engine. Production callers should never invoke this -- any
+  // segment pushed here will be flushed verbatim with the next
+  // process() call.
   void addTranscription(const Transcript& transcript) {
     output_.push_back(transcript);
   }
@@ -223,7 +233,18 @@ private:
   // model_type). Lifetime: opened in load() when cfg_.streaming == true,
   // finalize()d on endOfStream(), reset on unload(). Each process() call
   // routes through feed_pcm_f32() instead of the offline *_samples paths.
-  std::unique_ptr<parakeet::StreamSession> asr_session_;
+  //
+  // session_mutex_ guards the unique_ptrs against the data race between
+  // cancel() (framework-callable from any thread, concurrent with
+  // process()/unload()/reload()) and the lifecycle paths
+  // openStreamingSession_() / closeStreamingSession_() / endOfStream() /
+  // ~ParakeetModel that .reset() them. cancel() copies the raw pointer
+  // under the lock and invokes the engine's session-internal cancel()
+  // (itself thread-safe with concurrent feed/finalize) without holding
+  // the lock further; closeStreamingSession_() moves ownership out under
+  // the lock and runs the destructor outside.
+  mutable std::mutex                                 session_mutex_;
+  std::unique_ptr<parakeet::StreamSession>           asr_session_;
   std::unique_ptr<parakeet::SortformerStreamSession> diar_session_;
 
   // Wall-clock seconds of audio fed to the streaming sessions so far,

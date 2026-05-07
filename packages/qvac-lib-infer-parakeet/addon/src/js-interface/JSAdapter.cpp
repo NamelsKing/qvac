@@ -150,45 +150,4 @@ auto JSAdapter::loadAudioParams(js::Object audioParamsObj, js_env_t *env,
   return parakeetConfig;
 }
 
-void JSAdapter::loadMap(js::Object jsObject, js_env_t *env,
-                        std::map<std::string, JSValueVariant> &output) {
-  js_value_t* propNames = nullptr;
-  JS(js_get_property_names(env, jsObject, &propNames));
-
-  uint32_t length = 0;
-  JS(js_get_array_length(env, propNames, &length));
-
-  for (uint32_t i = 0; i < length; ++i) {
-    js_value_t* propName = nullptr;
-    JS(js_get_element(env, propNames, i, &propName));
-
-    auto key = js::String(env, propName).as<std::string>(env);
-    auto value = jsObject.getProperty(env, key.c_str());
-
-    js_value_type_t type;
-    JS(js_typeof(env, value, &type));
-
-    switch (type) {
-    case js_boolean: {
-      bool boolVal = false;
-      JS(js_get_value_bool(env, value, &boolVal));
-      output[key] = boolVal;
-      break;
-    }
-    case js_number: {
-      double numVal = 0.0;
-      JS(js_get_value_double(env, value, &numVal));
-      output[key] = numVal;
-      break;
-    }
-    case js_string: {
-      output[key] = js::String(env, value).as<std::string>(env);
-      break;
-    }
-    default:
-      break;
-    }
-  }
-}
-
 } // namespace qvac_lib_infer_parakeet

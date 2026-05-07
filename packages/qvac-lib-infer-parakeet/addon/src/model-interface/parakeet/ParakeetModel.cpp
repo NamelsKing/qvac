@@ -344,6 +344,18 @@ void ParakeetModel::unload() {
 }
 
 void ParakeetModel::reload() {
+  // reload() requires a persistent cfg_.modelPath. unload() clears
+  // gguf_buffer_, so a model originally loaded from a streamed byte
+  // buffer (loadWeights()) without a backing file on disk would fail to
+  // re-open here. The JS layer always writes the bytes to a temp file
+  // before calling load(), so cfg_.modelPath is set in practice; surface
+  // a clear error if a future caller skips that step.
+  if (cfg_.modelPath.empty()) {
+    throw qvac_errors::StatusError(
+        qvac_errors::general_error::InternalError,
+        "ParakeetModel::reload requires a persistent modelPath; "
+        "in-memory GGUF buffer is dropped on unload()");
+  }
   unload();
   load();
 }
@@ -351,9 +363,16 @@ void ParakeetModel::reload() {
 void ParakeetModel::endOfStream() {
   stream_ended_ = true;
   if (!cfg_.streaming || streaming_finalized_) return;
+  parakeet::StreamSession*           asr  = nullptr;
+  parakeet::SortformerStreamSession* diar = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(session_mutex_);
+    asr  = asr_session_.get();
+    diar = diar_session_.get();
+  }
   try {
-    if (asr_session_)  asr_session_->finalize();
-    if (diar_session_) diar_session_->finalize();
+    if (asr)  asr->finalize();
+    if (diar) diar->finalize();
   } catch (const std::exception& e) {
     QLOG(logger::Priority::WARNING,
          std::string("Streaming session finalize failed: ") + e.what());
@@ -423,8 +442,23 @@ void ParakeetModel::cancel() const {
   // Streaming sessions own their own cancel() that interrupts any
   // in-flight feed_pcm_f32. Best-effort -- the JobRunner's framework
   // also waits for processingSync.
-  if (asr_session_)  { try { asr_session_->cancel();  } catch (...) {} }
-  if (diar_session_) { try { diar_session_->cancel(); } catch (...) {} }
+  //
+  // cancel() is documented as concurrent with process()/unload()/reload(),
+  // and openStreamingSession_() / closeStreamingSession_() / endOfStream() /
+  // ~ParakeetModel all .reset() the unique_ptrs from another thread.
+  // Snapshot raw pointers under session_mutex_ so we don't race against a
+  // concurrent .reset(); the engine's session-internal cancel() is itself
+  // thread-safe with concurrent feed/finalize, so we can release the lock
+  // before invoking it.
+  parakeet::StreamSession*           asr  = nullptr;
+  parakeet::SortformerStreamSession* diar = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(session_mutex_);
+    asr  = asr_session_.get();
+    diar = diar_session_.get();
+  }
+  if (asr)  { try { asr->cancel();  } catch (...) {} }
+  if (diar) { try { diar->cancel(); } catch (...) {} }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -529,13 +563,18 @@ std::string ParakeetModel::runAsrProcess_(const Input& input) {
   }
   if (!engine) return ERR_MODEL_NOT_LOADED;
 
-  parakeet::EngineResult result;
-  const int64_t t = measureMs([&] {
-    result = engine->transcribe_samples(input.data(),
-                                        static_cast<int>(input.size()),
-                                        sample_rate_);
-  });
-  encoderMs_         += result.encoder_ms > 0.0 ? static_cast<int64_t>(result.encoder_ms) : t;
+  parakeet::EngineResult result =
+      engine->transcribe_samples(input.data(),
+                                 static_cast<int>(input.size()),
+                                 sample_rate_);
+  // Record per-stage timings verbatim from the engine. The earlier
+  // fallback (substitute the entire transcribe_samples wall-clock when
+  // encoder_ms == 0) silently mis-attributed mel + decoder time as
+  // encoder time, inflating the encoder bucket roughly 3-5x on the
+  // first call. Engines that don't report encoder_ms record 0; callers
+  // that need the full-pipeline wall clock can derive it from
+  // melSpecMs_ + encoderMs_ + decoderMs_.
+  encoderMs_         += static_cast<int64_t>(result.encoder_ms);
   decoderMs_         += static_cast<int64_t>(result.decode_ms);
   melSpecMs_         += static_cast<int64_t>(result.preprocess_ms);
   totalEncodedFrames_+= result.encoder_frames;
@@ -645,7 +684,7 @@ void ParakeetModel::openStreamingSession_() {
     opts.min_segment_ms = static_cast<int>(diarConfig_.minDurationOn * 1000.0f);
     opts.emit_partials  = cfg_.streamingEmitPartials;
 
-    diar_session_ = engine->diarize_start(
+    auto session = engine->diarize_start(
         opts, [this](const parakeet::StreamingDiarizationSegment& seg) {
           // Synthetic terminator (fired on finalize when audio ended on a
           // chunk boundary): nothing to emit.
@@ -665,10 +704,21 @@ void ParakeetModel::openStreamingSession_() {
             pending_streaming_segments_.push_back(std::move(t));
           }
         });
+    {
+      std::lock_guard<std::mutex> lk(session_mutex_);
+      diar_session_ = std::move(session);
+    }
   } else {
+    if (cfg_.streamingHistoryMs > 0) {
+      QLOG(logger::Priority::WARNING,
+           "streamingHistoryMs is Sortformer-only and is ignored for ASR streaming sessions");
+    }
     parakeet::StreamingOptions opts;
     opts.sample_rate    = sample_rate_;
-    opts.chunk_ms       = cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 1000;
+    // Match the documented default (2000 ms) when the caller leaves
+    // streamingChunkMs at its zero sentinel; the previous 1000 ms fallback
+    // diverged from README / index.d.ts / ParakeetConfig advertisements.
+    opts.chunk_ms       = cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 2000;
     if (cfg_.streamingLeftContextMs > 0) {
       opts.left_context_ms = cfg_.streamingLeftContextMs;
     }
@@ -678,7 +728,7 @@ void ParakeetModel::openStreamingSession_() {
     opts.emit_partials  = cfg_.streamingEmitPartials;
     opts.enable_energy_vad = cfg_.streamingEnergyVad;
 
-    asr_session_ = engine->stream_start(
+    auto session = engine->stream_start(
         opts, [this](const parakeet::StreamingSegment& seg) {
           if (seg.text.empty() && !seg.is_eou_boundary)
             return;
@@ -694,18 +744,29 @@ void ParakeetModel::openStreamingSession_() {
             pending_streaming_segments_.push_back(std::move(t));
           }
         });
+    {
+      std::lock_guard<std::mutex> lk(session_mutex_);
+      asr_session_ = std::move(session);
+    }
   }
 }
 
 void ParakeetModel::closeStreamingSession_() {
-  if (asr_session_) {
-    try { asr_session_->cancel(); } catch (...) {}
-    asr_session_.reset();
+  // Snapshot-and-release pattern: take ownership of the unique_ptrs under
+  // session_mutex_ so a concurrent cancel() can't observe a half-destroyed
+  // session, then run the (potentially blocking) session->cancel() and
+  // ~Session calls outside the lock.
+  std::unique_ptr<parakeet::StreamSession>           asr_to_destroy;
+  std::unique_ptr<parakeet::SortformerStreamSession> diar_to_destroy;
+  {
+    std::lock_guard<std::mutex> lk(session_mutex_);
+    asr_to_destroy  = std::move(asr_session_);
+    diar_to_destroy = std::move(diar_session_);
   }
-  if (diar_session_) {
-    try { diar_session_->cancel(); } catch (...) {}
-    diar_session_.reset();
-  }
+  if (asr_to_destroy)  { try { asr_to_destroy->cancel();  } catch (...) {} }
+  if (diar_to_destroy) { try { diar_to_destroy->cancel(); } catch (...) {} }
+  asr_to_destroy.reset();
+  diar_to_destroy.reset();
   {
     std::lock_guard<std::mutex> lk(streaming_mutex_);
     pending_streaming_segments_.clear();
@@ -782,10 +843,23 @@ std::string ParakeetModel::runStreamingProcess_(const Input& input) {
 
   // The session was finalized above, so feed_pcm_f32 would throw on the
   // next process() call. Reopen a fresh session for the next job; each JS
-  // run() is treated as an independent utterance. State that the
-  // application wants to carry across runs (e.g. live-mic.js's continuous
-  // capture) lives on the JS side as one long-running run() call, so the
-  // C++ side only ever sees one batch per session anyway.
+  // run() on this framework path is treated as an independent utterance.
+  //
+  // IMPORTANT (cross-call streaming state): the close+reopen below WIPES
+  // engine-side streaming state that consumers may believe survives across
+  // process() calls -- specifically:
+  //   * Sortformer cross-chunk speaker history (the engine starts over)
+  //   * EOU rolling window / partial decode state for ASR
+  //   * the streaming session's internal sample-position clock
+  // i.e. README / index.d.ts / ParakeetConfig::streaming language about
+  // "preserves speaker IDs across appends" applies to a SINGLE run() call
+  // (which the JS append() layer batches into one process() invocation),
+  // NOT across multiple run() calls on the same model instance. Use the
+  // duplex `runStreaming()` API (ParakeetStreamingProcessor) when you
+  // need a single long-lived session that survives across many append()
+  // batches without resetting -- the duplex path owns its own
+  // parakeet::StreamSession that is never closed mid-flight by the
+  // framework.
   closeStreamingSession_();
   try {
     openStreamingSession_();

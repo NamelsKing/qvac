@@ -210,6 +210,11 @@ startStreaming(js_env_t* env, js_callback_info_t* info) try {
             parakeetModel, instance.addonCpp->outputQueue, config);
   }
 
+  // The return value is informational only -- ParakeetInterface's
+  // startStreaming() in parakeet.js synthesises its own currentJobId and
+  // discards this value. Kept as Boolean(true) instead of switching to
+  // a void / undefined return so existing JS callers (and the
+  // MockedBinding parity tests) keep working unchanged.
   return js::Boolean::create(env, true);
 }
 JSCATCH
@@ -250,18 +255,29 @@ appendStreamingAudio(js_env_t* env, js_callback_info_t* info) try {
 }
 JSCATCH
 
+// Snapshot of stats captured from a ParakeetStreamingProcessor right
+// before tear-down so endStreaming() can return them to the JS layer
+// for the synthetic JobEnded payload.
+struct StreamingTeardownStats {
+  bool   cleaned          = false;
+  double audioDurationMs  = 0.0;
+  int64_t totalSamples    = 0;
+};
+
 // Tear down the streaming session for `instance`. When `forceful` is
 // true the underlying parakeet session is canceled (in-flight feed
-// aborts); otherwise it is finalized so trailing audio flushes.
-// Returns true if a session was cleaned up, false if none existed.
-inline bool
+// aborts); otherwise it is finalized so trailing audio flushes. Returns
+// the audio-duration / sample-count seen by the processor up to (and
+// including) the final flush so JS can populate response.stats; the
+// `cleaned` flag is false when no session existed.
+inline StreamingTeardownStats
 cleanupStreamingSession(
     qvac_lib_inference_addon_cpp::AddonJs& instance, bool forceful = false) {
   std::unique_ptr<ParakeetStreamingProcessor> processor;
   {
     std::lock_guard<std::mutex> lock(g_streamingMtx);
     auto it = g_streamingSessions.find(&instance);
-    if (it == g_streamingSessions.end()) return false;
+    if (it == g_streamingSessions.end()) return {};
     processor = std::move(it->second);
     g_streamingSessions.erase(it);
   }
@@ -270,7 +286,15 @@ cleanupStreamingSession(
   } else {
     processor->end();
   }
-  return true;
+  // end()/cancel() join the worker thread, so audio_seconds_ is now
+  // observed without a data race.
+  StreamingTeardownStats stats;
+  stats.cleaned         = true;
+  stats.audioDurationMs = processor->audioSeconds() * 1000.0;
+  stats.totalSamples    = static_cast<int64_t>(
+      processor->audioSeconds() *
+      static_cast<double>(processor->sampleRate()));
+  return stats;
 }
 
 inline js_value_t*
@@ -279,8 +303,22 @@ endStreaming(js_env_t* env, js_callback_info_t* info) try {
 
   JsArgsParser args(env, info);
   AddonJs& instance = JsInterface::getInstance(env, args.get(0, "instance"));
-  bool cleaned = cleanupStreamingSession(instance, /*forceful=*/false);
-  return js::Boolean::create(env, cleaned);
+  const StreamingTeardownStats stats =
+      cleanupStreamingSession(instance, /*forceful=*/false);
+
+  // Return an object so JS can populate the synthetic JobEnded with
+  // the actual audio duration / sample count rather than zeros. The
+  // shape mirrors what the JS layer feeds into _addonOutputCallback's
+  // sniff path: cleaned (was-there-a-session) + audioDurationMs +
+  // totalSamples.
+  auto out = js::Object::create(env);
+  out.setProperty(env, "cleaned", js::Boolean::create(env, stats.cleaned));
+  out.setProperty(env, "audioDurationMs",
+                  js::Number::create(env, stats.audioDurationMs));
+  out.setProperty(env, "totalSamples",
+                  js::Number::create(env,
+                                     static_cast<double>(stats.totalSamples)));
+  return out;
 }
 JSCATCH
 

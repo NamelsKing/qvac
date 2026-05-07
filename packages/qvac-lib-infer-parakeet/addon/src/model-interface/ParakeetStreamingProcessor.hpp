@@ -81,6 +81,15 @@ public:
   // audio, then join the worker thread.
   void cancel();
 
+  // Cumulative seconds of audio fed to the underlying parakeet streaming
+  // session so far. Used by the JS layer to populate the synthetic
+  // `JobEnded` stats object on `endStreaming()` so consumers reading
+  // `response.stats.audioDurationMs` / `totalSamples` after a duplex run
+  // get a non-zero value (the framework's RuntimeStats path is bypassed
+  // by this processor entirely).
+  double audioSeconds() const { return audio_seconds_; }
+  int    sampleRate()   const { return config_.sampleRate; }
+
 private:
   void processLoop_();
   void onAsrSegment_(const parakeet::StreamingSegment& seg);
@@ -108,6 +117,14 @@ private:
 
   std::atomic_bool worker_done_{false};
   std::thread thread_;
+
+  // Serialises end() / cancel() / dtor so the worker thread is joined
+  // exactly once even when end() races with cancel(), or two cancel()
+  // calls race, or the dtor's fallback cancel() races with an explicit
+  // end()/cancel() from the binding. Without this, the loser of the race
+  // observed thread_.joinable() == true and called join() on an already
+  // joined thread, which raises std::system_error.
+  std::once_flag teardown_once_;
 
   // Wall-clock seconds of audio fed so far; mirrors what the legacy
   // process() path tracked, used to translate per-session relative
