@@ -22,6 +22,10 @@ async function runCorruptedModelTest (options = {}) { // eslint-disable-line no-
   return runIntegrationModule('../integration/corrupted-model.test.js', options)
 }
 
+async function runDuplexStreamingTest (options = {}) { // eslint-disable-line no-unused-vars
+  return runIntegrationModule('../integration/duplex-streaming.test.js', options)
+}
+
 async function runEouStreamingTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/eou-streaming.test.js', options)
 }
@@ -71,6 +75,7 @@ module.exports = {
   runAddonMultimodelTest,
   runColdStartTimingTest,
   runCorruptedModelTest,
+  runDuplexStreamingTest,
   runEouStreamingTest,
   runGpuSmokeTest,
   runLiveStreamSimulationTest,

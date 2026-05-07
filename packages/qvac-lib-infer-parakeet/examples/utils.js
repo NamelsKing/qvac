@@ -104,8 +104,9 @@ function validatePaths (paths) {
  * Pushable async-iterable: consumers `await for (const chunk of
  * stream)` while producers `stream.push(chunk)` and `stream.end()`
  * close it. Used by the live-mic examples to feed chunks captured
- * from `sox` into `TranscriptionParakeet.run()` without buffering
- * the entire stream.
+ * from `sox` into `TranscriptionParakeet.runStreaming()` (duplex
+ * path) without buffering the entire stream. Also accepted by the
+ * batched `run()` path; both consumers iterate it lazily.
  */
 function pushableStream () {
   const queue = []

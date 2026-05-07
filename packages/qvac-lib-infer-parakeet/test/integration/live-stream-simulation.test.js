@@ -1,12 +1,20 @@
 'use strict'
 
 /**
- * Live Stream Simulation Tests
+ * Chunked-input simulation tests for the OFFLINE `run()` path.
  *
- * Simulates real-time audio streaming by chunking audio files and
- * feeding the chunks into a pushable async-iterable consumed by
- * `TranscriptionParakeet.run()`. Verifies the model handles
- * streaming input regardless of chunk size / cadence.
+ * Despite the file name, this suite does NOT exercise the duplex
+ * `runStreaming()` API -- for that, see
+ * `test/integration/duplex-streaming.test.js`. What it validates is
+ * that `TranscriptionParakeet.run(asyncIterable)` accepts arbitrary
+ * chunk sizes / cadences without choking on the chunking itself
+ * (the addon framework batches every appended chunk into a single
+ * job before invoking the C++ `process()` once -- see
+ * `ParakeetModel.cpp` for the JS-batches-then-C++-runs comment).
+ *
+ * If you're looking for evidence that the engine emits segments
+ * incrementally as audio is fed, that's the duplex API; this suite
+ * only covers the chunk-size invariance of the batched path.
  */
 
 const test = require('brittle')

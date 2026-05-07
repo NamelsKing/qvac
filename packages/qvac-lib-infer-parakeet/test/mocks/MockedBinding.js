@@ -16,6 +16,26 @@ class MockedBinding {
     this._busy = false
     this._runToken = 0
     this._interfaceType = null
+    // Duplex streaming session state. Mirrors the C++ side's
+    // g_streamingSessions map: at most one session per addon
+    // instance, opened by `startStreaming` and torn down by
+    // `endStreaming` / `cancel`. Each `appendStreamingAudio` call
+    // synthesises one Output event so the wrapper's onUpdate fires
+    // at the same cadence the real binding would.
+    this._streamingActive = false
+    this._streamingChunkIndex = 0
+    this._streamingConfig = null
+    // History of streaming actions for tests to assert against
+    // (counts of starts / appends / ends / cancels, plus the
+    // last streamingConfig that was passed). Reset implicitly via
+    // `destroyInstance`.
+    this._streamingLog = {
+      starts: 0,
+      appends: 0,
+      ends: 0,
+      cancels: 0,
+      lastConfig: null
+    }
   }
 
   createInstance (interfaceType, configurationParams, outputCb, transitionCb = null) {
@@ -77,9 +97,74 @@ class MockedBinding {
     this._runToken++
     this._busy = false
     this._state = state.LISTENING
+    if (this._streamingActive) {
+      this._streamingActive = false
+      this._streamingChunkIndex = 0
+      this._streamingLog.cancels++
+    }
     if (this.transitionCb) {
       this.transitionCb(this, this._state)
     }
+  }
+
+  // ─── Duplex streaming surface ─────────────────────────────────────────
+  // Mirrors the AddonJs.hpp entry points (`startStreaming`,
+  // `appendStreamingAudio`, `endStreaming`) plus the cancel-with-
+  // streaming hook. Each appended chunk synthesises one Output event
+  // so the wrapper's `onUpdate(...)` fires at the same cadence the
+  // real binding would; endStreaming is intentionally side-effect-free
+  // because the JS wrapper synthesises its own JobEnded (see
+  // parakeet.js).
+  startStreaming (handle, config = {}) {
+    if (handle !== this._handle) throw new Error('Invalid handle')
+    if (this._streamingActive) {
+      throw new Error('Streaming session already active for this instance')
+    }
+    this._streamingActive = true
+    this._streamingChunkIndex = 0
+    this._streamingConfig = config
+    this._streamingLog.starts++
+    this._streamingLog.lastConfig = config
+    return true
+  }
+
+  appendStreamingAudio (handle, data) {
+    if (handle !== this._handle) throw new Error('Invalid handle')
+    if (!this._streamingActive) {
+      throw new Error('No active streaming session for this instance')
+    }
+    if (data?.type !== 'audio' || !data?.input) {
+      throw new Error(`Invalid appendStreamingAudio payload type: ${data?.type}`)
+    }
+    if (data.input.length === 0) return false
+    this._streamingLog.appends++
+    const chunkIndex = this._streamingChunkIndex++
+    const audioLength = data.input.length
+    const sampleRate = 16000
+    const startS = (chunkIndex * audioLength) / sampleRate
+    const endS = ((chunkIndex + 1) * audioLength) / sampleRate
+    process.nextTick(() => {
+      if (!this._streamingActive) return
+      this._callCallbacks('Output', [{
+        text: `Mock streaming chunk ${chunkIndex}`,
+        start: startS,
+        end: endS,
+        toAppend: true,
+        isEndOfTurn: false,
+        startsWord: chunkIndex === 0
+      }], null)
+    })
+    return true
+  }
+
+  endStreaming (handle) {
+    if (handle !== this._handle) throw new Error('Invalid handle')
+    if (!this._streamingActive) return false
+    this._streamingActive = false
+    this._streamingChunkIndex = 0
+    this._streamingConfig = null
+    this._streamingLog.ends++
+    return true
   }
 
   status (handle) {
@@ -200,6 +285,9 @@ class MockedBinding {
     this._runToken++
     this._busy = false
     this._handle = null
+    this._streamingActive = false
+    this._streamingChunkIndex = 0
+    this._streamingConfig = null
     console.log('Destroyed the addon')
     this._state = state.IDLE
     if (this.transitionCb) {
