@@ -583,6 +583,40 @@ std::string ParakeetModel::runSortformerProcess_(const Input& input) {
 //  Streaming session lifecycle
 // ─────────────────────────────────────────────────────────────────────────
 
+std::unique_ptr<parakeet::StreamSession>
+ParakeetModel::createDuplexAsrSession(
+    const parakeet::StreamingOptions& opts,
+    parakeet::StreamingCallback on_segment) {
+  parakeet::Engine* engine = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(engine_mutex_);
+    engine = engine_.get();
+  }
+  if (!engine) {
+    throw qvac_errors::StatusError(
+        qvac_errors::general_error::InternalError,
+        "ParakeetModel::createDuplexAsrSession: engine not loaded");
+  }
+  return engine->stream_start(opts, std::move(on_segment));
+}
+
+std::unique_ptr<parakeet::SortformerStreamSession>
+ParakeetModel::createDuplexDiarizationSession(
+    const parakeet::SortformerStreamingOptions& opts,
+    parakeet::SortformerSegmentCallback on_segment) {
+  parakeet::Engine* engine = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(engine_mutex_);
+    engine = engine_.get();
+  }
+  if (!engine) {
+    throw qvac_errors::StatusError(
+        qvac_errors::general_error::InternalError,
+        "ParakeetModel::createDuplexDiarizationSession: engine not loaded");
+  }
+  return engine->diarize_start(opts, std::move(on_segment));
+}
+
 void ParakeetModel::openStreamingSession_() {
   parakeet::Engine* engine = nullptr;
   {
@@ -635,6 +669,12 @@ void ParakeetModel::openStreamingSession_() {
     parakeet::StreamingOptions opts;
     opts.sample_rate    = sample_rate_;
     opts.chunk_ms       = cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 1000;
+    if (cfg_.streamingLeftContextMs > 0) {
+      opts.left_context_ms = cfg_.streamingLeftContextMs;
+    }
+    if (cfg_.streamingRightLookaheadMs >= 0) {
+      opts.right_lookahead_ms = cfg_.streamingRightLookaheadMs;
+    }
     opts.emit_partials  = cfg_.streamingEmitPartials;
     opts.enable_energy_vad = cfg_.streamingEnergyVad;
 
@@ -648,6 +688,7 @@ void ParakeetModel::openStreamingSession_() {
           t.end         = static_cast<float>(seg.end_s);
           t.toAppend    = true;
           t.isEndOfTurn = seg.is_eou_boundary;
+          t.startsWord  = seg.starts_word;
           {
             std::lock_guard<std::mutex> lk(streaming_mutex_);
             pending_streaming_segments_.push_back(std::move(t));

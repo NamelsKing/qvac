@@ -92,6 +92,21 @@ auto JSAdapter::loadFromJSObject(js::Object jsObject, js_env_t* env)
     config.streamingEnergyVad = streamingEnergyVadOpt.value().as<bool>(env);
   }
 
+  auto streamingLeftContextMsOpt =
+      jsObject.getOptionalProperty<js::Number>(env, "streamingLeftContextMs");
+  if (streamingLeftContextMsOpt.has_value()) {
+    config.streamingLeftContextMs =
+        streamingLeftContextMsOpt.value().as<int32_t>(env);
+  }
+
+  auto streamingRightLookaheadMsOpt =
+      jsObject.getOptionalProperty<js::Number>(
+          env, "streamingRightLookaheadMs");
+  if (streamingRightLookaheadMsOpt.has_value()) {
+    config.streamingRightLookaheadMs =
+        streamingRightLookaheadMsOpt.value().as<int32_t>(env);
+  }
+
   auto innerConfigOpt = jsObject.getOptionalProperty<js::Object>(env, "config");
   if (innerConfigOpt.has_value()) {
     loadModelParams(innerConfigOpt.value(), env, config);

@@ -36,6 +36,13 @@ class TranscriptionParakeet {
    * @param {number} [opts.config.parakeetConfig.streamingHistoryMs=30000] - Sortformer rolling history
    * @param {boolean} [opts.config.parakeetConfig.streamingEmitPartials=true] - Emit partial segments
    * @param {boolean} [opts.config.parakeetConfig.streamingEnergyVad=false] - CTC/TDT energy-VAD events
+   * @param {number} [opts.config.parakeetConfig.streamingLeftContextMs] - Encoder left
+   *   context kept upstream of each chunk (default 10000 -- parakeet-cpp's own).
+   *   ASR sessions only; Sortformer ignores it.
+   * @param {number} [opts.config.parakeetConfig.streamingRightLookaheadMs] - Future
+   *   audio the encoder waits for before emitting each chunk (default 2000 --
+   *   parakeet-cpp's own). Adds directly to per-segment latency floor.
+   *   ASR sessions only; Sortformer ignores it.
    * @param {Object} [opts.logger=null] - Optional structured logger
    * @param {boolean} [opts.exclusiveRun=true] - Whether to run exclusively
    */
@@ -96,7 +103,9 @@ class TranscriptionParakeet {
       streamingChunkMs: this.params.streamingChunkMs ?? 2000,
       streamingHistoryMs: this.params.streamingHistoryMs ?? 30000,
       streamingEmitPartials: this.params.streamingEmitPartials !== false,
-      streamingEnergyVad: this.params.streamingEnergyVad === true
+      streamingEnergyVad: this.params.streamingEnergyVad === true,
+      streamingLeftContextMs: this.params.streamingLeftContextMs ?? -1,
+      streamingRightLookaheadMs: this.params.streamingRightLookaheadMs ?? -1
     }
   }
 
@@ -122,6 +131,41 @@ class TranscriptionParakeet {
       return await this._withExclusiveRun(() => this._runInternal(input))
     }
     return await this._runInternal(input)
+  }
+
+  /**
+   * Duplex streaming entry point. Opens a long-lived
+   * `parakeet::StreamSession` (or `SortformerStreamSession`) on the C++
+   * side and feeds each chunk from `audioStream` directly into it as
+   * the chunks arrive -- without batching the whole utterance in JS
+   * memory the way `run()` does. Per-chunk segments surface through
+   * `response.onUpdate(...)` as soon as the engine emits them. The
+   * session is closed (and the response resolves with a synthetic
+   * `JobEnded`) when the audio stream completes.
+   *
+   * @param {AsyncIterable<Buffer|Float32Array>} audioStream - 16 kHz mono
+   *   PCM stream. s16le `Buffer` chunks are converted to Float32 in
+   *   [-1, 1] internally; Float32Array chunks are passed through.
+   * @param {Object} [streamingConfig] - per-call overrides forwarded to
+   *   the native processor. Any field omitted falls back to the
+   *   `parakeetConfig.streaming*` value used at load time.
+   * @param {number} [streamingConfig.chunkMs] - encoder cadence in ms
+   * @param {number} [streamingConfig.historyMs] - Sortformer rolling
+   *   history window in ms
+   * @param {boolean} [streamingConfig.emitPartials] - emit partial
+   *   segments on chunk boundaries (default true)
+   * @param {boolean} [streamingConfig.emitEnergyVad] - surface
+   *   energy-VAD events for CTC/TDT
+   * @returns {Promise<QvacResponse>} - response object exposing
+   *   `onUpdate(seg => ...).await()`
+   */
+  async runStreaming (audioStream, streamingConfig = {}) {
+    if (this.exclusiveRun) {
+      return await this._withExclusiveRun(
+        () => this._runStreamingInternal(audioStream, streamingConfig)
+      )
+    }
+    return await this._runStreamingInternal(audioStream, streamingConfig)
   }
 
   async _withExclusiveRun (fn) {
@@ -162,6 +206,39 @@ class TranscriptionParakeet {
     })
 
     return response
+  }
+
+  async _runStreamingInternal (audioStream, streamingConfig) {
+    const normalized = this._normalizeAudioStream(audioStream)
+    const response = this._job.start()
+    await this.addon.startStreaming(streamingConfig || {})
+
+    this._pumpStreamingAudio(normalized).catch((error) => {
+      this.addon.endStreaming().catch(() => {})
+      this._job.fail(error)
+    })
+
+    return response
+  }
+
+  async _pumpStreamingAudio (audioStream) {
+    this.logger.debug('Start pumping audio into duplex streaming session')
+    for await (const chunk of audioStream) {
+      let audioData
+      if (chunk instanceof Float32Array) {
+        audioData = chunk
+      } else {
+        const int16Data = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2)
+        audioData = new Float32Array(int16Data.length)
+        for (let i = 0; i < int16Data.length; i++) {
+          audioData[i] = int16Data[i] / 32768.0
+        }
+      }
+      if (audioData.length === 0) continue
+      await this.addon.appendStreamingAudio(audioData)
+    }
+    this.logger.debug('Audio stream completed; closing duplex streaming session')
+    await this.addon.endStreaming()
   }
 
   /**

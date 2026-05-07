@@ -36,10 +36,11 @@
 #include "qvac-lib-inference-addon-cpp/ModelInterfaces.hpp"
 #include "qvac-lib-inference-addon-cpp/RuntimeStats.hpp"
 
+#include <parakeet/streaming.h>
+#include <parakeet/diarization.h>
+
 namespace parakeet {
 class Engine;
-class StreamSession;
-class SortformerStreamSession;
 } // namespace parakeet
 
 namespace qvac_lib_infer_parakeet {
@@ -89,6 +90,57 @@ public:
   void process(const Input& input);
   Output
   process(const Input& input, std::function<void(const Output&)> callback);
+
+  // ── Duplex streaming helpers ───────────────────────────────────────────
+  // Open a long-lived parakeet StreamSession owned by the caller (e.g.
+  // ParakeetStreamingProcessor). Bypasses the framework's per-call
+  // process() lifecycle: the caller drives feed_pcm_f32 / finalize /
+  // cancel directly on its own thread, and the on_segment callback fires
+  // synchronously inside feed_pcm_f32 / finalize whenever the engine
+  // emits a segment. Throws if the engine isn't loaded.
+  std::unique_ptr<parakeet::StreamSession> createDuplexAsrSession(
+      const parakeet::StreamingOptions& opts,
+      parakeet::StreamingCallback on_segment);
+
+  // Same idea for Sortformer-flavoured GGUFs.
+  std::unique_ptr<parakeet::SortformerStreamSession>
+  createDuplexDiarizationSession(
+      const parakeet::SortformerStreamingOptions& opts,
+      parakeet::SortformerSegmentCallback on_segment);
+
+  // Cheap accessors used by the duplex processor (and unit tests) to
+  // build session opts from cfg_ when the JS caller doesn't override
+  // them. Reads only; safe without holding engine_mutex_.
+  int                 getSampleRate() const { return sample_rate_; }
+  int                 getStreamingChunkMs() const {
+    return cfg_.streamingChunkMs > 0 ? cfg_.streamingChunkMs : 1000;
+  }
+  int                 getStreamingHistoryMs() const {
+    return cfg_.streamingHistoryMs > 0 ? cfg_.streamingHistoryMs : 30000;
+  }
+  // <0 sentinel = "not set; let parakeet use its own defaults"
+  // (10000 / 2000). Returned verbatim so callers can treat the negative
+  // value as "skip the override" rather than baking a duplicate of
+  // parakeet's defaults into our wrapper.
+  int                 getStreamingLeftContextMs() const {
+    return cfg_.streamingLeftContextMs;
+  }
+  int                 getStreamingRightLookaheadMs() const {
+    return cfg_.streamingRightLookaheadMs;
+  }
+  bool                getStreamingEmitPartials() const {
+    return cfg_.streamingEmitPartials;
+  }
+  bool                getStreamingEnergyVad() const {
+    return cfg_.streamingEnergyVad;
+  }
+  bool                isSortformer() const {
+    return cfg_.modelType == ModelType::SORTFORMER;
+  }
+  float               getDiarOnsetThreshold() const { return diarConfig_.onset; }
+  float               getDiarMinDurationOn() const {
+    return diarConfig_.minDurationOn;
+  }
 
   // ── Configuration ──────────────────────────────────────────────────────
   void setConfig(const ParakeetConfig& config) { cfg_ = config; }

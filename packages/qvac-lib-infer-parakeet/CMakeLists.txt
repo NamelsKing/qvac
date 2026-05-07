@@ -56,6 +56,8 @@ set(LIB_SRCS_PATH ${PROJECT_SOURCE_DIR}/addon/src/model-interface)
 
 set(LIB_SRCS
         ${LIB_SRCS_PATH}/ParakeetTypes.hpp
+        ${LIB_SRCS_PATH}/ParakeetStreamingProcessor.hpp
+        ${LIB_SRCS_PATH}/ParakeetStreamingProcessor.cpp
         ${LIB_SRCS_PATH}/parakeet/ParakeetModel.hpp
         ${LIB_SRCS_PATH}/parakeet/ParakeetModel.cpp
         ${LIB_SRCS_PATH}/parakeet/ParakeetConfig.hpp

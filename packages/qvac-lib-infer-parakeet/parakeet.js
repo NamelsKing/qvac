@@ -53,6 +53,10 @@ class ParakeetInterface {
    * @param {number} [configurationParams.streamingHistoryMs=30000] - Sortformer rolling history
    * @param {boolean} [configurationParams.streamingEmitPartials=true]
    * @param {boolean} [configurationParams.streamingEnergyVad=false] - CTC/TDT energy-VAD events
+   * @param {number} [configurationParams.streamingLeftContextMs] - ASR encoder
+   *   left context (parakeet default 10000 ms; -1 keeps the engine default).
+   * @param {number} [configurationParams.streamingRightLookaheadMs] - ASR encoder
+   *   right lookahead (parakeet default 2000 ms; -1 keeps the engine default).
    * @param {Function} outputCallback - callback for transcription output events
    * @param {Function} [stateCallback] - callback for state transitions
    */
@@ -412,6 +416,111 @@ class ParakeetInterface {
       this._setState(previousState)
       throw createParakeetError(ERR_CODES.FAILED_TO_APPEND, error.message, error)
     }
+  }
+
+  /**
+   * Open a long-lived duplex streaming session. While the session is
+   * open, audio appended via `appendStreamingAudio()` is fed directly
+   * into a long-lived `parakeet::StreamSession` (or
+   * `SortformerStreamSession`) on the C++ side -- bypassing the
+   * `append/runJob/process` batching pipeline used by `append()`. The
+   * session emits per-chunk segments through the regular output
+   * callback as soon as the engine produces them. Each native streaming
+   * session counts as one job for cancellation/state purposes.
+   *
+   * @param {Object} [config={}]
+   * @param {number} [config.chunkMs] - encoder cadence in ms (overrides cfg.streamingChunkMs)
+   * @param {number} [config.historyMs] - Sortformer rolling history (overrides cfg.streamingHistoryMs)
+   * @param {number} [config.leftContextMs] - ASR encoder left context (overrides cfg.streamingLeftContextMs)
+   * @param {number} [config.rightLookaheadMs] - ASR encoder right lookahead (overrides cfg.streamingRightLookaheadMs)
+   * @param {boolean} [config.emitPartials] - emit partial segments on chunk boundaries
+   * @param {boolean} [config.emitEnergyVad] - surface energy-VAD events for CTC/TDT
+   * @returns {Promise<number>} jobId assigned to the streaming session
+   */
+  async startStreaming (config = {}) {
+    try {
+      if (this._activeJobId !== null) {
+        throw new Error(
+          'Cannot start streaming: a job is already active. Call cancel() first.'
+        )
+      }
+      const currentJobId = this._nextJobId
+      this._activeJobId = currentJobId
+      this._nextJobId = nextSafeId(this._nextJobId)
+      try {
+        this._binding.startStreaming(this._handle, config)
+      } catch (error) {
+        this._activeJobId = null
+        throw error
+      }
+      this._setState(state.PROCESSING)
+      return currentJobId
+    } catch (error) {
+      throw createParakeetError(ERR_CODES.FAILED_TO_APPEND, error.message, error)
+    }
+  }
+
+  /**
+   * Push an audio chunk into the active streaming session.
+   * @param {Float32Array|Int16Array|ArrayBuffer|TypedArray} data - audio samples
+   * @returns {Promise<boolean>} true if the chunk was accepted
+   */
+  async appendStreamingAudio (data) {
+    try {
+      if (this._activeJobId === null) {
+        throw new Error('No active streaming session; call startStreaming() first.')
+      }
+      const samples = this._normalizeAudioInput(data)
+      return this._binding.appendStreamingAudio(this._handle, {
+        type: 'audio',
+        input: samples
+      })
+    } catch (error) {
+      throw createParakeetError(ERR_CODES.FAILED_TO_APPEND, error.message, error)
+    }
+  }
+
+  /**
+   * Gracefully close the active streaming session: trailing audio is
+   * flushed via `finalize()`, last segments are emitted via the output
+   * callback, then a synthetic JobEnded is delivered so the addon-cpp
+   * response chain (`onUpdate().await()`) resolves cleanly.
+   * @returns {Promise<void>}
+   */
+  async endStreaming () {
+    try {
+      if (this._activeJobId === null) return
+      const jobId = this._activeJobId
+      this._binding.endStreaming(this._handle)
+      // The native StreamingProcessor doesn't emit a synthetic JobEnded
+      // (the addon framework's runtimeStats path is bypassed entirely),
+      // so the JS-side state machine has to mark the job as finished
+      // manually. We pretend a regular JobEnded landed: clear the
+      // active job, push a JobEnded event with empty stats so the
+      // public TranscriptionParakeet response resolves.
+      this._activeJobId = null
+      this._setState(state.LISTENING)
+      if (this._outputCallback) {
+        this._outputCallback(this, 'JobEnded', jobId, {
+          totalTime: 0,
+          audioDurationMs: 0,
+          totalSamples: 0
+        }, null)
+      }
+    } catch (error) {
+      throw createParakeetError(ERR_CODES.FAILED_TO_RESET, error.message, error)
+    }
+  }
+
+  /**
+   * Forcefully abort an active streaming session. Aliased through
+   * `cancel()` on the binding so the C++ side runs the
+   * cancelWithStreaming wrapper which tears down the StreamingProcessor
+   * and falls through to the framework's regular cancel.
+   * @returns {Promise<void>}
+   */
+  async cancelStreaming () {
+    return this.cancel()
   }
 
   _normalizeAudioInput (data) {

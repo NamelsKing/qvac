@@ -1,15 +1,27 @@
 'use strict'
 
 /**
- * Live-mic transcription example.
+ * Live-mic transcription example (duplex streaming).
  *
- * Captures the default input device via `sox -d` (16 kHz mono s16le),
- * pushes each chunk through a pushable async-iterable, and feeds it
- * to the public `TranscriptionParakeet` class via `model.run()`.
- * Press Ctrl-C to flush and exit.
+ * Captures the default input device via `sox -d` (16 kHz mono s16le)
+ * and feeds every chunk straight into the model's duplex streaming
+ * session through `model.runStreaming(stream)`. Per-chunk transcripts
+ * surface via `response.onUpdate(...)` as soon as the engine emits
+ * them. Press Ctrl-C to flush and exit.
+ *
+ * Internally `runStreaming()` opens a long-lived
+ * `parakeet::StreamSession` (or `SortformerStreamSession`) on the C++
+ * side and forwards each chunk via `appendStreamingAudio()` -- no
+ * batching, no per-chunk session recreation, no `runJob` plumbing.
  *
  * Usage:
- *   bare examples/live-mic.js --model <gguf> [--accumulate]
+ *   bare examples/live-mic.js --model <gguf> [--accumulate] \
+ *                             [--chunk-ms <ms>] [--capture "<sox cmd>"]
+ *
+ * The default capture command (`sox -d -t raw ... -`) works on macOS / Linux
+ * and on Windows builds where sox auto-selects a working driver. If sox exits
+ * immediately on Windows, override the capture pipeline explicitly, e.g.
+ *   --capture "sox -t waveaudio default -t raw -r 16000 -b 16 -c 1 -e signed-integer -L -"
  */
 
 /* global Bare */
@@ -32,13 +44,51 @@ function isSilenceText (text) {
   return text.length === 0 || SILENCE_SENTINELS.has(text)
 }
 
+// Streaming TDT/CTC sometimes emits a single word as two segments
+// straddling a chunk boundary, e.g. "punctuation" -> ["pun",
+// "ctuation"], "Well" -> ["W", "ell"]. parakeet-cpp surfaces a
+// per-segment `startsWord` flag (set false on wordpiece continuations
+// of the previous segment, true on fresh SentencePiece word starts);
+// we use it to gate the inserted separator so "see" + "if" stays
+// "see if" but "pun" + "ctuation" rejoins into "punctuation".
+// Returns { text, firstStartsWord }: `firstStartsWord` mirrors the
+// flag of the first emitted segment so the cross-update accumulator
+// knows whether to prepend a space.
+function buildSegmentText (items) {
+  let text = ''
+  let firstStartsWord = true
+  let isFirst = true
+  for (const s of items) {
+    if (!s || !s.text || !s.toAppend) continue
+    const sw = s.startsWord !== false
+    if (isFirst) {
+      firstStartsWord = sw
+      text = s.text
+      isFirst = false
+    } else {
+      text += (sw ? ' ' : '') + s.text
+    }
+  }
+  return { text: text.replace(/\s+/g, ' '), firstStartsWord }
+}
+
 function parseArgs () {
-  const args = { model: null, accumulate: false }
+  const args = {
+    model: null,
+    accumulate: false,
+    capture: null,
+    chunkMs: null
+  }
   const argv = Bare.argv.slice(2)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--model' || a === '-m') args.model = argv[++i]
     else if (a === '--accumulate') args.accumulate = true
+    else if (a === '--capture' || a === '-c') args.capture = argv[++i]
+    else if (a === '--chunk-ms') {
+      const v = parseInt(argv[++i], 10)
+      if (Number.isFinite(v) && v >= 200) args.chunkMs = v
+    }
   }
   return args
 }
@@ -46,7 +96,7 @@ function parseArgs () {
 async function main () {
   const args = parseArgs()
   if (!args.model) {
-    console.error('Usage: bare examples/live-mic.js --model <gguf> [--accumulate]')
+    console.error('Usage: bare examples/live-mic.js --model <gguf> [--accumulate] [--chunk-ms <ms>] [--capture "<sox cmd>"]')
     process.exit(1)
   }
 
@@ -66,24 +116,42 @@ async function main () {
     config: {
       parakeetConfig: {
         streaming: true,
-        streamingChunkMs: 2000
+        streamingChunkMs: args.chunkMs ?? 2000,
+        useGPU: true
       }
     }
   })
   await model.load()
   console.log('Listening (Ctrl-C to stop)...\n')
 
-  const child = subprocess.spawn(CAPTURE_CMD.split(' ')[0],
-    CAPTURE_CMD.split(' ').slice(1),
-    { stdio: ['ignore', 'pipe', 'pipe'] })
+  const captureCmd = args.capture && args.capture.length > 0 ? args.capture : CAPTURE_CMD
+  const [captureBin, ...captureArgs] = captureCmd.split(' ')
+  let child
+  try {
+    child = subprocess.spawn(captureBin, captureArgs,
+      { stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      console.error(`\n'${captureBin}' not found on PATH.`)
+      console.error('Install sox (brew install sox / apt install sox / choco install sox / winget install ChrisBagwell.SoX).')
+    } else {
+      console.error(`\nFailed to spawn capture command: ${err.message}`)
+    }
+    addonLogging.releaseLogger()
+    process.exit(1)
+  }
   child.on('error', (err) => {
-    console.error(`\nFailed to spawn capture command: ${err.message}`)
-    console.error('Install sox (brew install sox / apt install sox / choco install sox).')
+    console.error(`\nCapture command failed: ${err.message}`)
     process.exit(1)
   })
-  child.stderr.on('data', () => {})
 
-  // ---------- Live segment printing ----------
+  let firstAudioSeen = false
+  let stderrBuf = ''
+  child.stderr.on('data', (chunk) => {
+    stderrBuf += chunk.toString('utf8')
+    if (stderrBuf.length > 8192) stderrBuf = stderrBuf.slice(-8192)
+  })
+
   let lineOpen = false
   function flushLine () {
     if (lineOpen) {
@@ -91,7 +159,7 @@ async function main () {
       lineOpen = false
     }
   }
-  function emitTranscript (text) {
+  function emitTranscript (text, firstStartsWord) {
     if (isSilenceText(text)) {
       if (args.accumulate) flushLine()
       return
@@ -102,39 +170,33 @@ async function main () {
         process.stdout.write(`[${ts}] ${text}`)
         lineOpen = true
       } else {
-        process.stdout.write(' ' + text)
+        process.stdout.write((firstStartsWord ? ' ' : '') + text)
       }
     } else {
       console.log(`[${ts}] ${text}`)
     }
   }
 
-  // ---------- Audio fan-in ----------
   const audioStream = pushableStream()
   child.stdout.on('data', (chunk) => {
+    if (!firstAudioSeen) firstAudioSeen = true
     if (!stopping) audioStream.push(chunk)
   })
 
-  // ---------- Run inference ----------
+  const streamingConfig = {}
+  if (args.chunkMs !== null) streamingConfig.chunkMs = args.chunkMs
+
   const runPromise = (async () => {
-    const response = await model.run(audioStream)
+    const response = await model.runStreaming(audioStream, streamingConfig)
     await response
       .onUpdate(out => {
         const items = Array.isArray(out) ? out : [out]
-        // Each segment from the streaming session is a self-contained
-        // transcript chunk. Collapse to a single line per emit.
-        const text = items
-          .filter(s => s && s.text && s.toAppend)
-          .map(s => s.text)
-          .join(' ')
-          .trim()
-          .replace(/\s+/g, ' ')
-        emitTranscript(text)
+        const { text, firstStartsWord } = buildSegmentText(items)
+        emitTranscript(text.trim(), firstStartsWord)
       })
       .await()
   })()
 
-  // ---------- Shutdown ----------
   async function shutdown () {
     if (stopping) return
     stopping = true
@@ -150,7 +212,22 @@ async function main () {
 
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
-  child.on('exit', () => shutdown())
+  child.on('exit', (code, signal) => {
+    if (!firstAudioSeen && !stopping) {
+      console.error(`\nCapture command exited before producing audio (code=${code}, signal=${signal}).`)
+      const tail = stderrBuf.trim()
+      if (tail) {
+        console.error('--- sox stderr ---')
+        console.error(tail)
+        console.error('------------------')
+      }
+      console.error('Hints:')
+      console.error('  - On Windows, try: --capture "sox -t waveaudio default -t raw -r 16000 -b 16 -c 1 -e signed-integer -L -"')
+      console.error('  - Verify a default recording device exists (Settings -> System -> Sound -> Input).')
+      console.error('  - Confirm SoX can list audio devices: sox -V6 -d -t raw -r 16000 -c 1 -e signed-integer -b 16 -L - 2>&1 | head')
+    }
+    shutdown()
+  })
 }
 
 main().catch(err => {

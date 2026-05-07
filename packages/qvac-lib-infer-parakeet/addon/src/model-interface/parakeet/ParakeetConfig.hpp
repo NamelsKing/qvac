@@ -37,6 +37,16 @@ struct ParakeetConfig {
   int  streamingHistoryMs    = 30000;   // Sortformer rolling window only
   bool streamingEmitPartials = true;
   bool streamingEnergyVad    = false;   // CTC/TDT only; ignored elsewhere
+  // Forwarded to parakeet::StreamingOptions.left_context_ms /
+  // right_lookahead_ms. ASR sessions only (Sortformer ignores both --
+  // it has its own SortformerStreamingOptions::history_ms knob).
+  // right_lookahead_ms adds directly to the per-segment latency floor
+  // (effective latency >= chunk_ms + right_lookahead_ms); left_context_ms
+  // bounds the rolling encoder context retained upstream of each chunk.
+  // -1 keeps parakeet's own defaults (10000 / 2000) so callers that don't
+  // set the field behave like before.
+  int  streamingLeftContextMs    = -1;
+  int  streamingRightLookaheadMs = -1;
 
   ParakeetConfig() = default;
   explicit ParakeetConfig(const std::string& path) : modelPath(path) {}
@@ -52,7 +62,9 @@ struct ParakeetConfig {
            streamingChunkMs == other.streamingChunkMs &&
            streamingHistoryMs == other.streamingHistoryMs &&
            streamingEmitPartials == other.streamingEmitPartials &&
-           streamingEnergyVad == other.streamingEnergyVad;
+           streamingEnergyVad == other.streamingEnergyVad &&
+           streamingLeftContextMs == other.streamingLeftContextMs &&
+           streamingRightLookaheadMs == other.streamingRightLookaheadMs;
   }
 
   bool operator!=(const ParakeetConfig& other) const { return !(*this == other); }

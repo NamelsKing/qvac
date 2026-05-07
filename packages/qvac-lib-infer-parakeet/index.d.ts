@@ -46,6 +46,21 @@ declare interface ParakeetConfig {
   streamingEmitPartials?: boolean
   /** CTC/TDT-only energy-VAD events (default: false) */
   streamingEnergyVad?: boolean
+  /**
+   * ASR encoder left-context window in milliseconds. Audio retained
+   * upstream of the current chunk so the encoder has context. Default
+   * `parakeet-cpp`'s own (10000 ms). ASR sessions only; Sortformer
+   * uses `streamingHistoryMs` instead.
+   */
+  streamingLeftContextMs?: number
+  /**
+   * ASR encoder right-lookahead window in milliseconds. Future audio
+   * the encoder waits for before emitting each chunk's segments. Adds
+   * directly to per-segment latency floor (effective latency >=
+   * `chunk_ms + right_lookahead_ms`). Default `parakeet-cpp`'s own
+   * (2000 ms). ASR sessions only.
+   */
+  streamingRightLookaheadMs?: number
 }
 
 /**
@@ -100,6 +115,23 @@ declare interface TranscriptionSegment {
    * the segment text.
    */
   isEndOfTurn?: boolean
+  /**
+   * True when this segment's first token is a SentencePiece word-start
+   * (the piece begins with the `▁` U+2581 marker), false when it is a
+   * wordpiece continuation of the previous segment's last token.
+   *
+   * Streaming consumers building a running transcript should insert a
+   * separator (e.g. " ") between successive segments only when the
+   * *new* segment has `startsWord === true`. Concatenating verbatim
+   * when `startsWord === false` rejoins chunk-boundary splits like
+   * `["pun", "ctuation"]` into `"punctuation"`; inserting a space
+   * there would yield `"pun ctuation"` instead.
+   *
+   * Always true on the very first segment of a session and on
+   * Sortformer (diarization) segments; field absent on offline
+   * transcribe results.
+   */
+  startsWord?: boolean
 }
 
 /**
@@ -113,6 +145,27 @@ declare type OutputEvent = 'JobStarted' | 'Output' | 'JobEnded' | 'Error'
 declare type AppendInput =
   | { type: 'audio'; data: ArrayBuffer; priority?: number }
   | { type: 'end of job' }
+
+/**
+ * Per-call overrides for the duplex streaming session opened by
+ * `TranscriptionParakeet.runStreaming()`. Any field omitted falls back
+ * to the corresponding `ParakeetConfig.streaming*` value used at load
+ * time.
+ */
+declare interface StreamingRunConfig {
+  /** Encoder cadence in ms (overrides `streamingChunkMs`). */
+  chunkMs?: number
+  /** Sortformer rolling-history window in ms (overrides `streamingHistoryMs`). */
+  historyMs?: number
+  /** ASR encoder left-context window in ms (overrides `streamingLeftContextMs`). */
+  leftContextMs?: number
+  /** ASR encoder right-lookahead window in ms (overrides `streamingRightLookaheadMs`). */
+  rightLookaheadMs?: number
+  /** Emit partial segments before chunk boundaries. */
+  emitPartials?: boolean
+  /** CTC/TDT-only energy-VAD events. */
+  emitEnergyVad?: boolean
+}
 
 /**
  * Minimal interface for the native addon.
@@ -129,6 +182,20 @@ declare interface Addon {
   stop(): Promise<void>
   reload(config: ParakeetConfig): Promise<void>
   destroyInstance(): Promise<void>
+
+  /**
+   * Open a long-lived duplex streaming session. Fed via
+   * `appendStreamingAudio()`; closed via `endStreaming()` (graceful)
+   * or `cancel()` (forceful). Per-segment Transcripts surface through
+   * the regular output callback as soon as the engine emits each chunk.
+   */
+  startStreaming(config?: StreamingRunConfig): Promise<number>
+  /** Push an audio chunk into the active streaming session. */
+  appendStreamingAudio(data: Float32Array | Int16Array | ArrayBuffer | ArrayBufferView): Promise<boolean>
+  /** Gracefully close the active streaming session. */
+  endStreaming(): Promise<void>
+  /** Forcefully abort the active streaming session. */
+  cancelStreaming(): Promise<void>
 }
 
 declare interface InferenceClientState {
@@ -160,6 +227,22 @@ declare class TranscriptionParakeet {
    */
   run(
     audioStream: Readable
+  ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>
+
+  /**
+   * Duplex streaming entry point: opens a long-lived
+   * `parakeet::StreamSession` (or `SortformerStreamSession`) on the
+   * native side and feeds chunks from `audioStream` directly into it
+   * as they arrive. Per-chunk segments surface through
+   * `response.onUpdate(...)` as soon as the engine emits them; the
+   * response resolves when the audio stream completes. Configure the
+   * model with `parakeetConfig.streaming = true` (default chunk
+   * cadence, history, etc. read from the `streaming*` fields) and
+   * optionally override per-call via `streamingConfig`.
+   */
+  runStreaming(
+    audioStream: Readable,
+    streamingConfig?: StreamingRunConfig
   ): Promise<QvacResponse<TranscriptionParakeet.ParakeetRunOutput>>
 
   reload(newConfig?: { parakeetConfig?: Partial<ParakeetConfig> }): Promise<void>
@@ -245,7 +328,8 @@ declare namespace TranscriptionParakeet {
     AppendInput,
     Addon,
     BackendId,
-    InferenceClientState
+    InferenceClientState,
+    StreamingRunConfig
   }
 }
 

@@ -23,9 +23,27 @@ struct Transcript {
   // same chunk; consumers that want a turn-end signal independent of the
   // transcript should test this flag.
   bool isEndOfTurn;
+  // True when this segment's first token is a SentencePiece word-start
+  // (the piece begins with the `▁` U+2581 marker), false when it is a
+  // wordpiece continuation of the previous segment's last token.
+  // Streaming consumers building a running transcript should insert a
+  // separator (e.g. " ") between successive segments only when the
+  // *new* segment has `startsWord == true`. Concatenating verbatim when
+  // `startsWord == false` rejoins chunk-boundary splits like
+  // ["pun", "ctuation"] into "punctuation"; inserting a space there
+  // would yield "pun ctuation" instead. Always true on the very first
+  // segment of a session, on Sortformer segments (the diarization
+  // engine doesn't surface tokens), and on any segment whose token list
+  // is empty (defensive default).
+  bool startsWord;
 
   Transcript()
-      : toAppend{false}, start(-1.0F), end(-1.0F), id{0}, isEndOfTurn{false} {}
+      : toAppend{false},
+        start(-1.0F),
+        end(-1.0F),
+        id{0},
+        isEndOfTurn{false},
+        startsWord{true} {}
 
   explicit Transcript(std::string_view strView)
       : text{strView},
@@ -33,7 +51,8 @@ struct Transcript {
         start{-1.0F},
         end{-1.0F},
         id{0},
-        isEndOfTurn{false} {}
+        isEndOfTurn{false},
+        startsWord{true} {}
 };
 
 /**
