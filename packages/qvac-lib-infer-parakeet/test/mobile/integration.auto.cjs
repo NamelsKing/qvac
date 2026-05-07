@@ -14,16 +14,16 @@ async function runAddonMultimodelTest (options = {}) { // eslint-disable-line no
   return runIntegrationModule('../integration/addon-multimodel.test.js', options)
 }
 
-async function runAddonTest (options = {}) { // eslint-disable-line no-unused-vars
-  return runIntegrationModule('../integration/addon.test.js', options)
-}
-
 async function runColdStartTimingTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/cold-start-timing.test.js', options)
 }
 
 async function runCorruptedModelTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/corrupted-model.test.js', options)
+}
+
+async function runEouStreamingTest (options = {}) { // eslint-disable-line no-unused-vars
+  return runIntegrationModule('../integration/eou-streaming.test.js', options)
 }
 
 async function runGpuSmokeTest (options = {}) { // eslint-disable-line no-unused-vars
@@ -69,9 +69,9 @@ async function runMultipleTranscriptionsTest (options = {}) { // eslint-disable-
 module.exports = {
   runAccuracyMultilangTest,
   runAddonMultimodelTest,
-  runAddonTest,
   runColdStartTimingTest,
   runCorruptedModelTest,
+  runEouStreamingTest,
   runGpuSmokeTest,
   runLiveStreamSimulationTest,
   runMobilePerfCtcCpuTest,
