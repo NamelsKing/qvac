@@ -249,7 +249,7 @@ const loadModelOptionsToRequestBaseSchema = z.union([
     .strict()
     .transform((data) => ({
       type: "loadModel" as const,
-      modelType: ModelType.onnxTts,
+      modelType: ModelType.ggmlTts,
       modelSrc: modelInputToSrcSchema.parse(data.modelSrc),
       modelName: modelInputToNameSchema.parse(data.modelSrc),
       modelConfig: data.modelConfig,
@@ -374,7 +374,7 @@ export const loadNmtModelRequestSchema = commonModelConfigSchema
 
 export const loadTtsModelRequestSchema = commonModelConfigSchema
   .extend({
-    modelType: z.literal(ModelType.onnxTts),
+    modelType: z.literal(ModelType.ggmlTts),
     modelConfig: ttsConfigSchema,
   })
   .strict();
@@ -562,7 +562,7 @@ export type InferredConfig<S> = S extends {
       ? z.input<typeof embedConfigBaseSchema>
       : S extends { engine: typeof ModelType.nmtcppTranslation }
         ? z.input<typeof nmtConfigSchema>
-        : S extends { engine: typeof ModelType.onnxTts }
+        : S extends { engine: typeof ModelType.ggmlTts }
           ? z.input<typeof ttsConfigSchema>
           : S extends { engine: typeof ModelType.onnxOcr }
             ? Partial<z.input<typeof ocrConfigSchema>>
