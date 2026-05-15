@@ -37,8 +37,6 @@ export {
   type WhisperAddonSegment,
 };
 
-const logger = getServerLogger();
-
 // Per-engine output shapes from `runStreaming`'s response iterator.
 //
 // Whisper emits arrays of segments interleaved with VAD / end-of-turn
