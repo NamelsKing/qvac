@@ -12,6 +12,7 @@ import {
   type TranscribeStreamEvent,
   type WhisperConfig,
   type AudioFormat,
+  type ParakeetStreamingRunConfig,
 } from "@/schemas";
 import { createAudioStream } from "@/server/bare/utils/audio-input";
 import { getServerLogger } from "@/logging";
@@ -36,8 +37,23 @@ export {
   type WhisperAddonSegment,
 };
 
+const logger = getServerLogger();
+
+// Per-engine output shapes from `runStreaming`'s response iterator.
+//
+// Whisper emits arrays of segments interleaved with VAD / end-of-turn
+// event objects. Parakeet emits an array or a single segment with an
+// optional `isEndOfTurn` boundary flag and `startsWord` continuation
+// hint. We treat both segment shapes as the same (whisper's extra
+// fields are ignored downstream and parakeet's extras are surfaced
+// where they matter).
+type StreamingSegment = WhisperAddonSegment & {
+  isEndOfTurn?: boolean;
+  startsWord?: boolean;
+};
 type StreamingModelOutput =
-  | { text: string }[]
+  | StreamingSegment[]
+  | StreamingSegment
   | { type: "vad"; speaking: boolean; probability: number }
   | { type: "endOfTurn"; silenceDurationMs: number };
 
@@ -52,10 +68,14 @@ interface WhisperRunStreamingOpts {
   vadRunIntervalMs?: number;
 }
 
+type ParakeetRunStreamingOpts = ParakeetStreamingRunConfig;
+
+type RunStreamingOpts = WhisperRunStreamingOpts | ParakeetRunStreamingOpts;
+
 interface StreamableModel {
   runStreaming(
     audioStream: AsyncIterable<Buffer>,
-    opts?: WhisperRunStreamingOpts,
+    opts?: RunStreamingOpts,
   ): Promise<StreamingModelResponse>;
 }
 
@@ -238,9 +258,32 @@ export async function* transcribe(
 }
 
 export interface TranscribeStreamOpts {
+  // Whisper-only knobs (ignored on other engines).
   emitVadEvents?: boolean;
   endOfTurnSilenceMs?: number;
   vadRunIntervalMs?: number;
+  // Parakeet-only per-call streaming overrides (ignored on other engines).
+  parakeetStreamingConfig?: ParakeetStreamingRunConfig;
+}
+
+function buildRunStreamingOpts(
+  engineType: string,
+  opts?: TranscribeStreamOpts,
+): RunStreamingOpts | undefined {
+  if (engineType === ModelType.parakeetTranscription) {
+    return opts?.parakeetStreamingConfig;
+  }
+
+  // Whisper (and any other engine that consumes the legacy whisper opts).
+  const runOpts: WhisperRunStreamingOpts = {};
+  if (opts?.emitVadEvents) runOpts.emitVadEvents = true;
+  if (opts?.endOfTurnSilenceMs !== undefined) {
+    runOpts.endOfTurnSilenceMs = opts.endOfTurnSilenceMs;
+  }
+  if (opts?.vadRunIntervalMs !== undefined) {
+    runOpts.vadRunIntervalMs = opts.vadRunIntervalMs;
+  }
+  return runOpts;
 }
 
 export function transcribeStream(
@@ -311,15 +354,7 @@ export async function* transcribeStream(
     ctx.signal.removeEventListener("abort", onAbort);
   });
 
-  const runOpts: WhisperRunStreamingOpts = {};
-  if (opts?.emitVadEvents) runOpts.emitVadEvents = true;
-  if (opts?.endOfTurnSilenceMs !== undefined) {
-    runOpts.endOfTurnSilenceMs = opts.endOfTurnSilenceMs;
-  }
-  if (opts?.vadRunIntervalMs !== undefined) {
-    runOpts.vadRunIntervalMs = opts.vadRunIntervalMs;
-  }
-
+  const runOpts = buildRunStreamingOpts(engineType, opts);
   const response = await model.runStreaming(audioInputStream, runOpts);
 
   for await (const output of response.iterate()) {
@@ -327,34 +362,80 @@ export async function* transcribeStream(
     requestLogger.debug("Live Transcription Update:", output);
 
     if (!Array.isArray(output)) {
-      if (output.type === "vad") {
-        yield {
-          type: "vad",
-          speaking: output.speaking,
-          probability: output.probability,
-        };
+      // Whisper event objects.
+      if ("type" in output) {
+        if (output.type === "vad") {
+          yield {
+            type: "vad",
+            speaking: output.speaking,
+            probability: output.probability,
+          };
+          continue;
+        }
+        if (output.type === "endOfTurn") {
+          // `endOfTurn` events that arrive via the typed-event path
+          // come exclusively from the whisper engine — whisper
+          // measures a trailing silence window and surfaces the
+          // boundary as `{ type: "endOfTurn", silenceDurationMs }`.
+          // Parakeet's EOU is token-driven and is emitted from
+          // `emitSegment` below, tagged `source: "parakeet"`.
+          yield {
+            type: "endOfTurn",
+            source: "whisper",
+            silenceDurationMs: output.silenceDurationMs,
+          };
+          continue;
+        }
         continue;
       }
-      if (output.type === "endOfTurn") {
-        yield {
-          type: "endOfTurn",
-          silenceDurationMs: output.silenceDurationMs,
-        };
-        continue;
-      }
+      // Parakeet sometimes emits a single segment instead of an array.
+      yield* emitSegment(output, metadata, silenceMarker);
       continue;
     }
 
-    for (const segment of output as WhisperAddonSegment[]) {
-      if (!segment.text) continue;
-      if (silenceMarker && segment.text.includes(silenceMarker)) continue;
-      if (metadata) {
-        yield toTranscribeSegment(segment);
-        continue;
-      }
-      if (segment.text.trim()) {
-        yield segment.text;
-      }
+    for (const segment of output) {
+      yield* emitSegment(segment, metadata, silenceMarker);
     }
   }
 }
+
+/**
+ * Emit a single addon segment as either a metadata `TranscribeSegment`
+ * (whisper only), a plain text chunk, or a synthetic `endOfTurn` event
+ * (parakeet's EOU model surfaces end-of-utterance via the
+ * `isEndOfTurn` flag on the same segment that carries the trailing
+ * speech tokens).
+ *
+ * Parakeet's EOU is token-driven, so the synthesized event carries
+ * `source: "parakeet"` and no measured silence window. Whisper's own
+ * `endOfTurn` events (emitted upstream as `{ type: "endOfTurn",
+ * silenceDurationMs }`) are tagged `source: "whisper"` in the typed-
+ * event branch above and are not routed through this helper.
+ */
+function* emitSegment(
+  segment: StreamingSegment,
+  metadata: boolean | undefined,
+  silenceMarker: string,
+): Generator<string | TranscribeSegment | TranscribeStreamEvent> {
+  if (!segment.text) {
+    if (segment.isEndOfTurn) {
+      yield { type: "endOfTurn", source: "parakeet" };
+    }
+    return;
+  }
+  if (silenceMarker && segment.text.includes(silenceMarker)) {
+    if (segment.isEndOfTurn) {
+      yield { type: "endOfTurn", source: "parakeet" };
+    }
+    return;
+  }
+  if (metadata) {
+    yield toTranscribeSegment(segment);
+  } else if (segment.text.trim()) {
+    yield segment.text;
+  }
+  if (segment.isEndOfTurn) {
+    yield { type: "endOfTurn", source: "parakeet" };
+  }
+}
+
