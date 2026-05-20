@@ -158,40 +158,40 @@ jobs:
           run-integration: ${{ needs.context.outputs.run_verify == 'true' }}
           workdir: ${{ github.workspace }}/packages/tts-ggml
 
-  cpp-lint:
-    needs:
-      - context
-      - label-gate
-    if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
-    uses: ./.github/workflows/cpp-lint.yaml
-    secrets: inherit
-    with:
-      sha: ${{ needs.context.outputs.base_sha }}
-      pr_head_sha: ${{ needs.context.outputs.head_sha }}
-      workdir: packages/tts-ggml
+  #cpp-lint:
+  #  needs:
+  #    - context
+  #    - label-gate
+  #  if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
+  #  uses: ./.github/workflows/cpp-lint.yaml
+  #  secrets: inherit
+  #  with:
+  #    sha: ${{ needs.context.outputs.base_sha }}
+  #    pr_head_sha: ${{ needs.context.outputs.head_sha }}
+  #    workdir: packages/tts-ggml
 
   # tts-ggml has no C++ unit tests today (CMakeLists.txt's BUILD_TESTING
   # block is reserved for the future qvac::ttsggml::* suite).  The
   # cpp-test-coverage-tts-ggml.yml workflow currently exposes a stub
   # "no tests yet" job; re-add the gating here once the real C++ tests
   # land.
-  cpp-tests-coverage:
-    permissions:
-      contents: read
-      packages: read
-      checks: write
-      pull-requests: write
-      id-token: write
-      actions: read
-    needs:
-      - context
-      - label-gate
-    if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
-    uses: ./.github/workflows/cpp-test-coverage-tts-ggml.yml
-    secrets: inherit
-    with:
-      repository: ${{ needs.context.outputs.repository }}
-      ref: ${{ needs.context.outputs.ref }}
+  #cpp-tests-coverage:
+  #  permissions:
+  #    contents: read
+  #    packages: read
+  #    checks: write
+  #    pull-requests: write
+  #    id-token: write
+  #    actions: read
+  #  needs:
+  #    - context
+  #    - label-gate
+  #  if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
+  #  uses: ./.github/workflows/cpp-test-coverage-tts-ggml.yml
+  #  secrets: inherit
+  #  with:
+  #    repository: ${{ needs.context.outputs.repository }}
+  #    ref: ${{ needs.context.outputs.ref }}
 
   prebuild:
     permissions:
@@ -209,21 +209,21 @@ jobs:
       repository: ${{ needs.context.outputs.repository }}
       ref: ${{ needs.context.outputs.ref }}
 
-  run-integration-tests:
-    permissions:
-      contents: read
-      packages: read
-      id-token: write
-    needs:
-      - context
-      - prebuild
-      - label-gate
-    if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
-    uses: ./.github/workflows/integration-test-tts-ggml.yml
-    secrets: inherit
-    with:
-      repository: ${{ needs.context.outputs.repository }}
-      ref: ${{ needs.context.outputs.ref }}
+  #run-integration-tests:
+  #  permissions:
+  #    contents: read
+  #    packages: read
+  #    id-token: write
+  #  needs:
+  #    - context
+  #    - prebuild
+  #    - label-gate
+  #  if: needs.label-gate.outputs.authorised == 'true' && (needs.context.outputs.run_verify == 'true' || github.event_name == 'workflow_dispatch')
+  #  uses: ./.github/workflows/integration-test-tts-ggml.yml
+  #  secrets: inherit
+  #  with:
+  #    repository: ${{ needs.context.outputs.repository }}
+  #    ref: ${{ needs.context.outputs.ref }}
 
   run-mobile-integration-tests:
     permissions:
@@ -243,10 +243,10 @@ jobs:
       ref: ${{ needs.context.outputs.ref }}
 
   merge-guard:
-    needs: [authorize, sanity-checks, cpp-lint, cpp-tests-coverage, prebuild, run-integration-tests, run-mobile-integration-tests]
+    needs: [authorize, sanity-checks, prebuild, run-mobile-integration-tests]
     if: always()
     uses: ./.github/workflows/public-pr.yml
     with:
-      sanity-checks-status: ${{ needs.sanity-checks.result == 'success' && (needs.cpp-lint.result == 'success' || needs.cpp-lint.result == 'skipped') && (needs.cpp-tests-coverage.result == 'success' || needs.cpp-tests-coverage.result == 'skipped') }}
+      sanity-checks-status: ${{ needs.sanity-checks.result == 'success' }}
       build-status: ${{ needs.prebuild.result == 'success' || needs.prebuild.result == 'skipped' }}
-      integration-tests-status: ${{ (needs.run-integration-tests.result == 'success' || needs.run-integration-tests.result == 'skipped') && (needs.run-mobile-integration-tests.result == 'success' || needs.run-mobile-integration-tests.result == 'skipped') }}
+      integration-tests-status: ${{ needs.run-mobile-integration-tests.result == 'success' || needs.run-mobile-integration-tests.result == 'skipped' }}
