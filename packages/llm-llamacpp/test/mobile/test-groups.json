@@ -1,15 +1,15 @@
 {
   "ios": {
-    "heavy1": ["runFinetuningPauseResumeTest"],
-    "heavy2": ["runToolCallingTest"],
-    "heavy3": ["runImageElephantTest"],
-    "heavy4": ["runOcrLightonTest"],
-    "heavy5": ["runReasoningTest"],
-    "heavy6": ["runSlidingContextTest"],
-    "heavy7": ["runImageFruitPlateTest"],
-    "heavy8": ["runImageHighResAuroraTest"],
-    "heavy9": ["runGemma4Test"],
-    "heavy10": ["runOcrPaddleTest"],
+    "finetuning": ["runFinetuningPauseResumeTest"],
+    "toolCalling": ["runToolCallingTest"],
+    "imageElephant": ["runImageElephantTest"],
+    "ocrLighton": ["runOcrLightonTest"],
+    "reasoning": ["runReasoningTest"],
+    "slidingContext": ["runSlidingContextTest"],
+    "imageFruitPlate": ["runImageFruitPlateTest"],
+    "imageAurora": ["runImageHighResAuroraTest"],
+    "gemma": ["runGemma4Test"],
+    "ocrPaddle": ["runOcrPaddleTest"],
     "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
@@ -28,22 +28,22 @@
     ]
   },
   "android": {
-    "heavyA": [
+    "heavyA-finetune-reason-ocr": [
       "runFinetuningPauseResumeTest",
       "runReasoningTest",
       "runOcrLightonTest",
       "runOcrPaddleTest"
     ],
-    "heavyB": [
+    "heavyB-tool-gemma-sliding": [
       "runToolCallingTest",
       "runGemma4Test",
       "runSlidingContextTest"
     ],
-    "imagePerfA": [
+    "imagePerf-aurora-elephant": [
       "runImageHighResAuroraTest",
       "runImageElephantTest"
     ],
-    "imagePerfB": [
+    "imagePerf-fruitPlate": [
       "runImageFruitPlateTest"
     ],
     "lightA": [
