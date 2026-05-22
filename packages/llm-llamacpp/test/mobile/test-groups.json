@@ -28,15 +28,17 @@
     ]
   },
   "android": {
-    "heavyA-finetune-reason-ocr": [
+    "heavyA-finetune-reasoning": [
       "runFinetuningPauseResumeTest",
-      "runReasoningTest",
-      "runOcrLightonTest",
-      "runOcrPaddleTest"
+      "runReasoningTest"
     ],
-    "heavyB-tool-gemma-sliding": [
+    "heavyB-toolCall-gemma": [
       "runToolCallingTest",
-      "runGemma4Test",
+      "runGemma4Test"
+    ],
+    "heavyC-ocr-sliding": [
+      "runOcrLightonTest",
+      "runOcrPaddleTest",
       "runSlidingContextTest"
     ],
     "imagePerf-aurora-elephant": [

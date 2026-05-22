@@ -13,7 +13,7 @@ description: |
       consumer's mocha-grep, scheduled later against dual-flagship devices.
     * Sharded mode (test-groups non-empty): N test specs, one per group,
       scheduled later against the addon's own device pool. LLM uses 12 iOS +
-      6 Android groups; OCR uses 2 (perf + regular).
+      7 Android groups; OCR uses 2 (perf + regular).
 
   The WDIO config + post_test pulls live in wdio.template.js so we sidestep
   GitHub Actions' 21,000-character template-expression limit.
