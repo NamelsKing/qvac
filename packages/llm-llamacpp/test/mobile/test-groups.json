@@ -28,33 +28,31 @@
     ]
   },
   "android": {
-    "groupA": [
+    "heavy1": ["runFinetuningPauseResumeTest"],
+    "heavy2": ["runToolCallingTest"],
+    "heavy3": ["runImageElephantTest"],
+    "heavy4": ["runOcrLightonTest"],
+    "heavy5": ["runReasoningTest"],
+    "heavy6": ["runSlidingContextTest"],
+    "heavy7": ["runImageFruitPlateTest"],
+    "heavy8": ["runImageHighResAuroraTest"],
+    "heavy9": ["runGemma4Test"],
+    "heavy10": ["runOcrPaddleTest"],
+    "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
       "runCacheStateMachineTest",
       "runConfigParametersTest",
-      "runToolsCompactTest",
-      "runFinetuningPauseResumeTest",
-      "runGenerationParamsTest",
-      "runGrammarTest"
+      "runToolsCompactTest"
     ],
-    "groupB": [
-      "runQwen35Test",
-      "runGemma4Test",
+    "lightB": [
+      "runGenerationParamsTest",
+      "runGrammarTest",
       "runModelLoadingTest",
       "runMultiGpuTest",
       "runMultiInstanceTest",
-      "runOcrLightonTest",
-      "runOcrPaddleTest",
-      "runReasoningTest",
-      "runSlidingContextTest",
-      "runToolCallingTest",
+      "runQwen35Test",
       "runUtf8OutputTest"
-    ],
-    "groupImagesPerf": [
-      "runImageElephantTest",
-      "runImageFruitPlateTest",
-      "runImageHighResAuroraTest"
     ]
   }
 }
