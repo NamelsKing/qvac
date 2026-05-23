@@ -120,6 +120,15 @@ runs:
             for suite_arn in $(echo "$suites_json" | jq -r '.suites[].arn'); do
               local suite_name safe_suite suite_dir
               suite_name=$(echo "$suites_json" | jq -r --arg arn "$suite_arn" '.suites[] | select(.arn == $arn) | .name // "unknown"')
+
+              # Setup Test and Teardown Test suites only contain Device Farm
+              # framework bookkeeping (screenshot of home screen, install logs).
+              # Skipping them saves 2 list-artifacts API calls + downloads per
+              # device-job — significant when multiplied across many shards.
+              case "$suite_name" in
+                "Setup Test"|"Teardown Test") continue ;;
+              esac
+
               safe_suite=$(echo "$suite_name" | tr ' /' '__' | tr -cd '[:alnum:]_-')
               suite_dir="${job_dir}/${safe_suite}"
               mkdir -p "$suite_dir"
@@ -146,7 +155,7 @@ runs:
         }
         export -f download_run_logs
 
-        MAX_PARALLEL=4
+        MAX_PARALLEL=8
         PIDS=()
         for RUN_ARN in "${RUN_ARNS[@]}"; do
           download_run_logs "$RUN_ARN" "$LOG_DIR" &
