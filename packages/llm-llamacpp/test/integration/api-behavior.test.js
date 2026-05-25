@@ -134,7 +134,7 @@ safeTest('run | cancel: allowed, cancels current job', { timeout: 600_000 }, asy
   t.pass('cancel during run resolves and stops job')
 })
 
-safeTest('run | run: second run() throws busy error', { timeout: 1_800_000 }, async t => {
+safeTest('run | run: second run() throws busy error', { timeout: 600_000 }, async t => {
   const { model } = await setupModel(t, { n_predict: '256' })
   const firstResponse = await model.run(LONG_PROMPT)
   let firstError = null
