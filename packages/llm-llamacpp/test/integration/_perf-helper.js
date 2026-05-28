@@ -319,21 +319,16 @@ function recordPerformance (label, totalTime, extra) {
 
   _installExitHook()
 
-  // Per-test flush: emit just this iteration's row to the console so
-  // a crash on run N still leaves runs 1..N-1 in logcat / syslog.
-  // extract-from-log.js --merge concatenates the deltas across emits.
-  //
-  // Deliberately NO writeReport() on disk per-record: (a) rewriting
-  // the whole JSON on every iteration is expensive, and (b) the
-  // stringify of the cumulative results array (plus model output
-  // text) has been observed to exhaust V8's Zone allocator on iOS,
-  // producing a SIGTRAP from FatalProcessOutOfMemory. The exit hook
-  // below still performs one final writeReport for the on-device
-  // artifact copy.
+  // Per-test flush on mobile: emit the latest row to console (for log
+  // extraction) and write the cumulative report to disk (global.testDir
+  // = Documents). The disk write ensures perf-report.json is available
+  // for devicectl pull without relying on the exit hook (which doesn't
+  // fire because the React Native app stays running).
   if (isMobile) {
     if (typeof _perfReporter.writeToConsole === 'function') {
       _perfReporter.writeToConsole({ lightweight: true, delta: true })
     }
+    try { _perfReporter.writeReport() } catch (_) {}
   }
 
   const lines = [
