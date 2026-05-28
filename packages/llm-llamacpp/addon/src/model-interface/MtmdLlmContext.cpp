@@ -800,10 +800,13 @@ void MtmdLlmContext::resetState(bool resetStats) {
   // Clear UTF-8 buffer when resetting state
   utf8Buffer_.clear();
 
-  // KV cache is being wiped — cached vision embeddings referencing positions
-  // in it become invalid. Drop entries but preserve stats across slides.
-  visionPrefixCache_.clearData();
+  // Vision prefix cache stores raw post-projection embeddings (CLIP output),
+  // NOT KV positions. Entries are re-injected into fresh KV contexts on each
+  // use via mtmd_helper_decode_image_chunk, so they remain valid across KV
+  // resets. Only clear on full stats reset (session end / no cacheKey) or
+  // explicit onMemoryWarning().
   if (resetStats) {
+    visionPrefixCache_.clearData();
     visionPrefixCache_.clearStats();
   }
 
