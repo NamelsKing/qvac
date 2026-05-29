@@ -36,10 +36,14 @@ const useCpu = isDarwinX64 || isLinuxArm64
 
 const TEST_TIMEOUT = 1_800_000 // 15 min — matches the existing VLM image tests
 
-// Two visually distinct images already shipped as test fixtures + registered
-// as iOS/Android testAssets by the image-elephant / image-fruit-plate tests.
+// Two small, visually distinct images already shipped as test fixtures and
+// registered as iOS/Android testAssets (elephant.jpg 612x408 by the
+// image-elephant test; news-paper.jpg 500x350 by the OCR tests). Both are
+// small on purpose: fruitPlate.png (2250x3000) / highRes (3000x4000) are
+// avoided here because Qwen3.5's dynamic resolution tokenizes them to ~4k
+// image tokens, overflowing a 4096 context at prefill.
 const ELEPHANT = 'elephant.jpg'
-const FRUIT_PLATE = 'fruitPlate.png'
+const SECOND_IMAGE = 'news-paper.jpg'
 
 function vc (stats) {
   const s = stats || {}
@@ -124,9 +128,9 @@ function runVisionCacheTests (modelConfig) {
   }, async t => {
     const inference = await setup(t, modelConfig)
     const elephantPath = getMediaPath(ELEPHANT)
-    const fruitPath = getMediaPath(FRUIT_PLATE)
+    const secondPath = getMediaPath(SECOND_IMAGE)
     t.ok(fs.existsSync(elephantPath), `${ELEPHANT} fixture should exist`)
-    t.ok(fs.existsSync(fruitPath), `${FRUIT_PLATE} fixture should exist`)
+    t.ok(fs.existsSync(secondPath), `${SECOND_IMAGE} fixture should exist`)
 
     // Run 1 — cold: first sighting of the elephant → miss(es) + populate.
     const r1 = await describeImage(inference, elephantPath, 'What animal is in this image? Answer in one word.')
@@ -159,17 +163,17 @@ function runVisionCacheTests (modelConfig) {
       `cached-decode output is still correct: "${r2.generatedText.slice(0, 80)}"`)
 
     // Run 3 — a DISTINCT image → new miss(es); distinctImages grows.
-    const s3 = vc((await describeImage(inference, fruitPath, 'What food is in this image? Answer in one word.')).stats)
-    t.comment(`${modelConfig.label} run3 cold fruit: ${JSON.stringify(s3)}`)
+    const s3 = vc((await describeImage(inference, secondPath, 'Describe this image in one word.')).stats)
+    t.comment(`${modelConfig.label} run3 cold second image: ${JSON.stringify(s3)}`)
     t.ok(s3.distinct > s2.distinct, 'a distinct image adds new cache entries')
     t.ok(s3.misses > s2.misses, 'a distinct image records fresh miss(es)')
     t.is(s3.hits, s2.hits, 'a distinct image does not hit')
 
-    // Run 4 — repeat the fruit image → it now hits too.
-    const s4 = vc((await describeImage(inference, fruitPath, 'List the fruit you see.')).stats)
-    t.comment(`${modelConfig.label} run4 warm fruit: ${JSON.stringify(s4)}`)
-    t.ok(s4.hits > s3.hits, 'repeated fruit image hits the cache')
-    t.is(s4.distinct, s3.distinct, 'repeated fruit image adds no new distinct entry')
+    // Run 4 — repeat the second image → it now hits too.
+    const s4 = vc((await describeImage(inference, secondPath, 'What is shown in this image?')).stats)
+    t.comment(`${modelConfig.label} run4 warm second image: ${JSON.stringify(s4)}`)
+    t.ok(s4.hits > s3.hits, 'repeated second image hits the cache')
+    t.is(s4.distinct, s3.distinct, 'repeated second image adds no new distinct entry')
 
     // onMemoryWarning() drops all cached embeddings (iOS/Android low-memory
     // hook). The next request for a previously-cached image must therefore MISS
@@ -221,11 +225,11 @@ function runVisionCacheTests (modelConfig) {
     const budgetBytes = Number(budgetMb) * 1024 * 1024
     const inference = await setup(t, modelConfig, { vision_cache_budget_mb: budgetMb })
     const elephantPath = getMediaPath(ELEPHANT)
-    const fruitPath = getMediaPath(FRUIT_PLATE)
+    const secondPath = getMediaPath(SECOND_IMAGE)
 
     // Sequence A -> B -> A under a budget sized to hold roughly one image.
     const a1 = vc((await describeImage(inference, elephantPath, 'What animal is this? One word.')).stats)
-    const b1 = vc((await describeImage(inference, fruitPath, 'What food is this? One word.')).stats)
+    const b1 = vc((await describeImage(inference, secondPath, 'Describe this image in one word.')).stats)
     const a2 = vc((await describeImage(inference, elephantPath, 'Name the animal. One word.')).stats)
     t.comment(`${modelConfig.label} budget(${budgetMb}MB) a1=${JSON.stringify(a1)} b1=${JSON.stringify(b1)} a2=${JSON.stringify(a2)}`)
 

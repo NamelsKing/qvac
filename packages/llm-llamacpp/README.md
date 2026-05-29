@@ -430,6 +430,8 @@ measured a **~48 % reduction in time-to-first-token** on the cached turns.
 | `vision_cache`           | `"true"` / `"false"`  | `"true"` | Enable/disable the cache. When disabled, every image is encoded + projected from scratch. |
 | `vision_cache_budget_mb` | integer (MB)          | `100`    | Maximum memory for cached embeddings. Entries are evicted LRU once the budget is exceeded; an image whose embeddings alone exceed the budget is never cached. |
 
+> The hyphen spellings `vision-cache` and `vision-cache-budget-mb` are also accepted, matching the dual-form convention used by keys like `main-gpu` / `reasoning-budget`.
+
 ```js
 const model = new LlmLlamacpp({
   files: { model: [modelPath], projectionModel: projPath },

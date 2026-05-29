@@ -25,9 +25,12 @@ const QWEN3_5 = {
     seed: '42',
     verbosity: '2'
   },
-  // 0.8B embeddings are smaller (~1 MB/entry), so a 2 MB budget holds one image
-  // but not two → the second distinct image forces an LRU eviction.
-  evictBudgetMb: '2'
+  // 0.8B embeddings are smaller (~1 MB for the 612x408 elephant, less for the
+  // 500x350 newspaper), so a 1 MB budget holds one image but not two → the
+  // second distinct image forces an LRU eviction. (The budget test degrades
+  // gracefully if the exact sizes differ, so this only needs to be roughly
+  // one entry.)
+  evictBudgetMb: '1'
 }
 
 runVisionCacheTests(QWEN3_5)

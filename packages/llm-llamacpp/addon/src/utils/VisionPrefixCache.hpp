@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -59,8 +60,10 @@ public:
 
   explicit VisionPrefixCache(std::size_t budgetBytes = DEFAULT_BUDGET_BYTES);
 
-  // Look up a cached entry. Returns a copy of the entry (thread-safe — the
-  // copy is made under the lock). Returns std::nullopt on miss.
+  // Look up a cached entry. Returns an independent copy of the entry
+  // (thread-safe). The large embeddings copy is made AFTER the lock is
+  // released — entries are held behind a shared_ptr internally, so only a
+  // cheap refcount bump happens under the lock. Returns std::nullopt on miss.
   std::optional<VisionCacheEntry> get(const std::string& key);
 
   // Insert / overwrite. Evicts least-recently-used entries while total byte
@@ -95,9 +98,12 @@ private:
   std::size_t currentBytes_ = 0;
   std::size_t peakBytes_ = 0;
   std::list<std::string> order_; // front = MRU, back = LRU
+  // Entries are held behind a shared_ptr so get() can copy out the pointer
+  // under the lock (cheap) and deep-copy the embeddings after releasing it.
   std::unordered_map<
-      std::string,
-      std::pair<VisionCacheEntry, std::list<std::string>::iterator>>
+      std::string, std::pair<
+                       std::shared_ptr<const VisionCacheEntry>,
+                       std::list<std::string>::iterator>>
       entries_;
 
   std::size_t hits_ = 0;

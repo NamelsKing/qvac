@@ -365,16 +365,24 @@ void LlamaModel::init(bool acquireLock) {
       qvac_lib_inference_addon_llama::VisionPrefixCache::DEFAULT_BUDGET_BYTES;
   bool visionCacheExplicitlyDisabled = false;
   {
-    auto vcIt = configFilemap.find("vision_cache");
-    if (vcIt != configFilemap.end()) {
-      if (vcIt->second == "0" || vcIt->second == "false") {
-        visionCacheExplicitlyDisabled = true;
+    // Accept both the hyphen and underscore spellings, consistent with the
+    // dual-form lookup used for reasoning-budget, main-gpu, etc.
+    for (const std::string& key : {"vision-cache", "vision_cache"}) {
+      auto vcIt = configFilemap.find(key);
+      if (vcIt != configFilemap.end()) {
+        if (vcIt->second == "0" || vcIt->second == "false") {
+          visionCacheExplicitlyDisabled = true;
+        }
+        configFilemap.erase(vcIt);
       }
-      configFilemap.erase(vcIt);
     }
     if (!visionCacheExplicitlyDisabled) {
-      auto budgetIt = configFilemap.find("vision_cache_budget_mb");
-      if (budgetIt != configFilemap.end()) {
+      for (const std::string& key :
+           {"vision-cache-budget-mb", "vision_cache_budget_mb"}) {
+        auto budgetIt = configFilemap.find(key);
+        if (budgetIt == configFilemap.end()) {
+          continue;
+        }
         try {
           constexpr std::size_t kMaxMB = SIZE_MAX / (1024ULL * 1024ULL);
           auto val = std::stoul(budgetIt->second, nullptr, 10);
@@ -393,6 +401,7 @@ void LlamaModel::init(bool acquireLock) {
       }
     } else {
       visionCacheBudgetBytes = 0;
+      configFilemap.erase("vision-cache-budget-mb");
       configFilemap.erase("vision_cache_budget_mb");
     }
   }

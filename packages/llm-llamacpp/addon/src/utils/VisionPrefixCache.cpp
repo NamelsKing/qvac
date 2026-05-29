@@ -12,19 +12,24 @@ VisionPrefixCache::VisionPrefixCache(std::size_t budgetBytes)
     : budgetBytes_(budgetBytes) {}
 
 std::optional<VisionCacheEntry> VisionPrefixCache::get(const std::string& key) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  if (key.empty()) {
-    ++misses_;
-    return std::nullopt;
+  std::shared_ptr<const VisionCacheEntry> entryPtr;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (key.empty()) {
+      ++misses_;
+      return std::nullopt;
+    }
+    auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      ++misses_;
+      return std::nullopt;
+    }
+    ++hits_;
+    touch(it->second.second);
+    entryPtr = it->second.first; // cheap refcount bump while locked
   }
-  auto it = entries_.find(key);
-  if (it == entries_.end()) {
-    ++misses_;
-    return std::nullopt;
-  }
-  ++hits_;
-  touch(it->second.second);
-  return it->second.first;
+  // Deep-copy the (potentially multi-MB) embeddings after releasing the lock.
+  return *entryPtr;
 }
 
 bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
@@ -38,15 +43,16 @@ bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
   }
   auto existing = entries_.find(key);
   if (existing != entries_.end()) {
-    currentBytes_ -= existing->second.first.sizeBytes();
-    existing->second.first = std::move(entry);
-    currentBytes_ += existing->second.first.sizeBytes();
+    currentBytes_ -= existing->second.first->sizeBytes();
+    existing->second.first =
+        std::make_shared<const VisionCacheEntry>(std::move(entry));
+    currentBytes_ += existing->second.first->sizeBytes();
     touch(existing->second.second);
     while (currentBytes_ > budgetBytes_ && order_.size() > 1) {
       const std::string& victim = order_.back();
       auto vIt = entries_.find(victim);
       if (vIt != entries_.end()) {
-        currentBytes_ -= vIt->second.first.sizeBytes();
+        currentBytes_ -= vIt->second.first->sizeBytes();
         entries_.erase(vIt);
       }
       order_.pop_back();
@@ -60,7 +66,7 @@ bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
     const std::string& victim = order_.back();
     auto vIt = entries_.find(victim);
     if (vIt != entries_.end()) {
-      currentBytes_ -= vIt->second.first.sizeBytes();
+      currentBytes_ -= vIt->second.first->sizeBytes();
       entries_.erase(vIt);
     }
     order_.pop_back();
@@ -71,7 +77,10 @@ bool VisionPrefixCache::put(std::string key, VisionCacheEntry entry) {
   if (currentBytes_ > peakBytes_)
     peakBytes_ = currentBytes_;
   entries_.emplace(
-      std::move(key), std::make_pair(std::move(entry), order_.begin()));
+      std::move(key),
+      std::make_pair(
+          std::make_shared<const VisionCacheEntry>(std::move(entry)),
+          order_.begin()));
   ++distinctImages_;
   return true;
 }
@@ -201,13 +210,33 @@ struct Sha256Ctx {
   }
 
   void update(const uint8_t* data, std::size_t len) {
-    for (std::size_t i = 0; i < len; ++i) {
-      block[blockLen++] = data[i];
+    std::size_t i = 0;
+    // Top off a partial block first, then run full 64-byte blocks straight
+    // from the input, then buffer the remainder. Bulk memcpy is ~10x faster
+    // than the byte-at-a-time loop on multi-MB images. The (block, blockLen,
+    // totalLen) state evolves identically, so finalize() and the digest are
+    // byte-for-byte identical to the scalar version.
+    if (blockLen > 0) {
+      const std::size_t need = 64 - blockLen;
+      const std::size_t take = (len < need) ? len : need;
+      std::memcpy(block + blockLen, data, take);
+      blockLen += take;
+      i += take;
       if (blockLen == 64) {
         transform();
         totalLen += 512;
         blockLen = 0;
       }
+    }
+    while (len - i >= 64) {
+      std::memcpy(block, data + i, 64);
+      transform();
+      totalLen += 512;
+      i += 64;
+    }
+    if (i < len) {
+      std::memcpy(block + blockLen, data + i, len - i);
+      blockLen += len - i;
     }
   }
 
