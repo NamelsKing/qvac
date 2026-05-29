@@ -301,12 +301,23 @@ std::string sha256OfFile(const std::string& path) {
     if (!fin) {
       return {};
     }
+    // Cap the bytes hashed. Without this, a special file such as /dev/zero or
+    // a FIFO never reaches EOF and the read loop runs forever; a stat()-based
+    // check would miss those (they report size 0). Any genuine image is far
+    // below this bound, so exceeding it means the path is not a real media
+    // file — return empty (the caller then skips caching and re-encodes
+    // normally) instead of hashing unbounded input.
+    constexpr std::size_t kMaxFileBytes = 512ULL * 1024 * 1024;
     Sha256Ctx ctx;
     std::array<char, 65536> buf{};
+    std::size_t total = 0;
     while (fin.read(buf.data(), buf.size()) || fin.gcount() > 0) {
-      ctx.update(
-          reinterpret_cast<const uint8_t*>(buf.data()),
-          static_cast<std::size_t>(fin.gcount()));
+      const auto n = static_cast<std::size_t>(fin.gcount());
+      total += n;
+      if (total > kMaxFileBytes) {
+        return {};
+      }
+      ctx.update(reinterpret_cast<const uint8_t*>(buf.data()), n);
     }
     auto digest = ctx.finalize();
     return digestToHex(digest.data(), digest.size());
