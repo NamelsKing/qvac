@@ -800,13 +800,12 @@ void MtmdLlmContext::resetState(bool resetStats) {
   // Clear UTF-8 buffer when resetting state
   utf8Buffer_.clear();
 
-  // Vision prefix cache stores raw post-projection embeddings (CLIP output),
-  // NOT KV positions. Entries are re-injected into fresh KV contexts on each
-  // use via mtmd_helper_decode_image_chunk, so they remain valid across KV
-  // resets. Only clear on full stats reset (session end / no cacheKey) or
-  // explicit onMemoryWarning().
+  // Vision prefix cache stores raw post-projection embeddings keyed by image
+  // SHA-256. Entries are context-independent and re-injected into fresh KV
+  // contexts via mtmd_helper_decode_image_chunk, so they remain valid across
+  // KV resets and cacheKey changes. Data persists for the model lifetime;
+  // cleared only on destroy or onMemoryWarning().
   if (resetStats) {
-    visionPrefixCache_.clearData();
     visionPrefixCache_.clearStats();
   }
 
