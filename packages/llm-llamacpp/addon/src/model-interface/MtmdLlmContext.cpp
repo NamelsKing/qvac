@@ -349,15 +349,22 @@ bool MtmdLlmContext::evalMessageWithTools(
   // generation (e.g. Qwen3VL + 2250x3000 image at ctx=4096).
   {
     const size_t nPastPostSlide = static_cast<size_t>(nPast_);
-    // Reserve a minimum generation headroom even when n_predict <= 0
-    // (unlimited generation — the documented default). Image tokens cannot be
-    // slid mid-generation, so a prompt that fills the context to within a
-    // handful of tokens is effectively doomed; catch it here with the
-    // actionable error below instead of after the expensive encode + decode.
+    // Reserve a minimum generation headroom when n_predict < 0 (unlimited
+    // generation — the documented default). Image tokens cannot be slid
+    // mid-generation, so a prompt that fills the context to within a handful
+    // of tokens is effectively doomed; catch it here with the actionable
+    // error below instead of after the expensive encode + decode.
+    // n_predict == 0 is prefill-only (generates nothing), so it needs no
+    // headroom and must not be rejected for leaving no room to generate.
     constexpr size_t kMinGenerationHeadroom = 64;
-    size_t nPredict = params_.n_predict > 0
-                          ? static_cast<size_t>(params_.n_predict)
-                          : kMinGenerationHeadroom;
+    size_t nPredict;
+    if (params_.n_predict > 0) {
+      nPredict = static_cast<size_t>(params_.n_predict);
+    } else if (params_.n_predict == 0) {
+      nPredict = 0;
+    } else {
+      nPredict = kMinGenerationHeadroom;
+    }
     if (nPredict > nCtx)
       nPredict = nCtx;
     constexpr size_t kSafetyMargin = 16;
