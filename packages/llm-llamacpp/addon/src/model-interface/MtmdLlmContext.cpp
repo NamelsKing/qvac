@@ -407,9 +407,20 @@ bool MtmdLlmContext::evalMessageWithTools(
         cacheKey.append(imageHashView);
       }
 
+      const std::size_t nTokensChunk = mtmd_input_chunk_get_n_tokens(chunk);
+      const std::size_t nEmbd =
+          static_cast<std::size_t>(llama_model_n_embd(model_));
+
       auto cached =
           cacheKey.empty() ? std::nullopt : visionPrefixCache_.get(cacheKey);
-      if (cached) {
+      // Decode from cache ONLY when the cached buffer exactly matches the
+      // shape mtmd_helper_decode_image_chunk will read for THIS chunk: it
+      // consumes mtmd_input_chunk_get_n_tokens(chunk) * n_embd floats from
+      // the buffer. A mismatch (hash collision, or a change in image
+      // preprocessing for the same bytes) would otherwise read out of
+      // bounds. On mismatch we fall through and re-encode from scratch.
+      if (cached && nEmbd != 0 && cached->nTokens == nTokensChunk &&
+          cached->embeddings.size() == nTokensChunk * nEmbd) {
         // Cache hit: get() returned a copy (thread-safe). The API takes
         // non-const float* so we pass our owned copy directly.
         int32_t res = mtmd_helper_decode_image_chunk(
@@ -446,9 +457,6 @@ bool MtmdLlmContext::evalMessageWithTools(
       // mtmd_encode_chunk() call. Deep-copy NOW, before any further
       // encode runs (e.g. a second image chunk in this same loop).
       const float* embd = mtmd_get_output_embd(ctxVision_.get());
-      const std::size_t nTokensChunk = mtmd_input_chunk_get_n_tokens(chunk);
-      const std::size_t nEmbd =
-          static_cast<std::size_t>(llama_model_n_embd(model_));
 
       if (embd == nullptr || nTokensChunk == 0 || nEmbd == 0) {
         std::string errorMsg = string_format(
