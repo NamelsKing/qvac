@@ -11,6 +11,8 @@
     "heavy9": ["runGemma4Test"],
     "heavy10": ["runOcrPaddleTest"],
     "heavy11": ["runQuantizedKvcacheTest"],
+    "heavy12": ["runVisionCacheGemma4Test"],
+    "heavy13": ["runVisionCacheQwen35Test"],
     "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
@@ -59,6 +61,10 @@
       "runImageElephantTest",
       "runImageFruitPlateTest",
       "runImageHighResAuroraTest"
+    ],
+    "groupVisionCache": [
+      "runVisionCacheGemma4Test",
+      "runVisionCacheQwen35Test"
     ]
   }
 }
