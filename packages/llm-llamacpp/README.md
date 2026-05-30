@@ -402,9 +402,14 @@ await model.unload()
 
 When a multimodal model processes an image, the bytes are run through a CLIP-style
 vision encoder and then a projection layer (`mmproj`) that maps the vision features
-into the LLM's embedding space. On constrained devices this projection — not the
-CLIP encode — dominates time-to-first-token: the Qwen3-VL merger projection costs
-~183 ms on an iPhone 16e versus ~2 ms on an M4.
+into the LLM's embedding space. Both steps run on every turn that includes the image.
+
+**Use case.** Multimodal chat and document-understanding apps almost always re-send the
+same image across turns — either as an explicit "send an image, then ask several
+questions about it" flow, or because the client replays the full message history (image
+included) on each stateless `run()`. Without caching, that identical image is re-encoded
+and re-projected from scratch on every single turn — redundant work that grows with
+conversation length and dominates time-to-first-token on constrained devices.
 
 The **vision prefix cache** stores the *post-projection* image embeddings so that
 re-sending the same image skips **both** the CLIP encode and the projection on
@@ -419,9 +424,35 @@ once, then ask several questions about it* — fast: only the first turn pays th
 encode + projection cost. A multi-turn, same-image run on a Mac M4 (Gemma 4 E2B Q4_K_M)
 measured a **~48 % reduction in time-to-first-token** on the cached turns.
 
-> The vision prefix cache is **not** the KV / prompt cache. It caches image
-> embeddings only; for caching the token KV state across turns see
-> [Cache API](./docs/cache-api.md).
+### Vision cache vs. the KV / prompt cache
+
+The vision prefix cache is **not** the KV / prompt cache — they cache different data
+and are complementary. (For the KV / prompt cache itself, see [Cache API](./docs/cache-api.md).)
+
+|                                              | KV / prompt cache                                  | Vision prefix cache                                       |
+|----------------------------------------------|----------------------------------------------------|-----------------------------------------------------------|
+| What it stores                               | Token **KV state** (attention keys/values at fixed context positions) | **Post-projection image embeddings** (context-independent feature vectors) |
+| Keyed by                                     | Conversation prefix / session                      | `SHA-256(image bytes)` + model + mmproj                   |
+| Survives a KV reset / context-window eviction? | No — tied to live positions in the context        | **Yes** — re-injected into a fresh context on every use   |
+| Survives the image being re-attached later?  | No — the prefix no longer matches                  | **Yes** — same bytes still hit                            |
+| Lifetime                                     | Per session / context                              | Model lifetime (until LRU eviction or `onMemoryWarning()`) |
+
+**Why the vision cache adds value on top of the KV cache.** When the host keeps a
+conversation's KV state across turns and does *not* re-send the image, the LLM KV cache
+already makes follow-up turns free — the image's tokens are still in context, so there is
+nothing to re-encode. The vision cache targets the cases the KV cache **cannot** cover:
+
+- **Sliding-window agent loops.** In a long loop the image's tokens are eventually evicted
+  from the context window and the image is re-attached later. The KV prefix no longer holds
+  it, so it would normally be re-encoded + re-projected from scratch — the vision cache
+  serves the cached embeddings instead.
+- **Stateless / history-replay clients.** A client that resends the full message history
+  (image included) on each `run()` invalidates the KV prefix every turn, but the vision
+  cache still hits on the identical image bytes.
+
+The two caches **compound**: KV reuse skips re-decoding
+tokens that are still in context, while the vision cache skips re-encoding images whenever
+they fall out of (or never entered) the KV prefix.
 
 ### Options
 
