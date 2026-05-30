@@ -22,6 +22,7 @@ const path = require('bare-path')
 const os = require('bare-os')
 const { ensureModel, getMediaPath } = require('./utils')
 const { describeImage, checkKeywordsInText } = require('./_image-common.js')
+const { recordPerformance } = require('./_perf-helper.js')
 const LlmLlamacpp = require('../../index.js')
 
 const platform = os.platform()
@@ -60,6 +61,49 @@ function vc (stats) {
     // the KV cache and re-evaluates the whole image prompt.
     promptTokens: Number(s.promptTokens || 0)
   }
+}
+
+// QVAC-19118 (A2): record a cold→warm cache pair to the shared perf reporter so
+// the Combined Performance Report's "Cache Hit Improvement" section can show how
+// much a cache hit saves. `scenario` is 'vision-cache' (stateless image re-send
+// → CLIP encode + mmproj projection skipped) or 'kv-cache' (same prefix re-sent
+// with a cacheKey → prefill skipped). The derived improvement fields are stashed
+// on the WARM row so each row is self-contained in the report (no cross-row
+// pairing needed). `cold`/`warm` are describeImage() results
+// ({ generatedText, startTime, endTime, stats }).
+function recordCacheImprovement (modelConfig, scenario, cold, warm) {
+  const ep = useCpu ? 'cpu' : 'gpu'
+  const coldTotal = cold.endTime - cold.startTime
+  const warmTotal = warm.endTime - warm.startTime
+  const coldTtft = Number((cold.stats && cold.stats.TTFT) || 0)
+  const warmTtft = Number((warm.stats && warm.stats.TTFT) || 0)
+  const pct = (c, w) => (c > 0 ? Number((100 * (c - w) / c).toFixed(2)) : null)
+
+  const base = `${modelConfig.label} elephant [${scenario}`
+  recordPerformance(`${base} cold]`, coldTotal, {
+    stats: cold.stats,
+    scenario,
+    model: modelConfig.label,
+    deviceId: ep,
+    _output: cold.generatedText,
+    categorical: { cache_state: 'cold (miss)' }
+  })
+  recordPerformance(`${base} warm]`, warmTotal, {
+    stats: warm.stats,
+    scenario,
+    model: modelConfig.label,
+    deviceId: ep,
+    _output: warm.generatedText,
+    categorical: { cache_state: 'warm (hit)' },
+    extraMetrics: {
+      cold_ttft_ms: Math.round(coldTtft),
+      ttft_saved_ms: Math.round(coldTtft - warmTtft),
+      ttft_speedup_pct: pct(coldTtft, warmTtft),
+      cold_total_ms: Math.round(coldTotal),
+      total_saved_ms: Math.round(coldTotal - warmTotal),
+      total_speedup_pct: pct(coldTotal, warmTotal)
+    }
+  })
 }
 
 async function setup (t, modelConfig, extraConfig = {}) {
@@ -255,6 +299,45 @@ function runVisionCacheTests (modelConfig) {
       // eviction was required. The hard cap above still proves enforcement.
       t.comment(`${modelConfig.label}: both images fit within ${budgetMb}MB — no eviction needed`)
     }
+  })
+
+  // --- Test 4 (perf): record cold→warm timings for BOTH cache mechanisms so
+  // the Combined Performance Report surfaces the TTFT / total-time a cache hit
+  // saves. Loads its own model instance (unloaded on teardown). Speedup
+  // MAGNITUDE is recorded telemetry, not asserted — it would be flaky on
+  // shared / virtual CI GPUs. Only the cache MECHANISM is asserted (a hit
+  // happened; the warm prefix re-evaluated no more tokens than the cold one).
+  test(`${modelConfig.label}: cache-hit performance (vision + KV)`, {
+    timeout: TEST_TIMEOUT
+  }, async t => {
+    const inference = await setup(t, modelConfig)
+    const elephantPath = getMediaPath(ELEPHANT)
+    t.ok(fs.existsSync(elephantPath), `${ELEPHANT} fixture should exist`)
+
+    // 1) Vision cache — stateless (no cacheKey → KV reset between runs). The
+    //    repeat hits the embedding cache, skipping CLIP encode + projection.
+    //    A different prompt mirrors the real "same image, new question" case.
+    const vCold = await describeImage(inference, elephantPath, 'What animal is in this image? Answer in one word.')
+    const vWarm = await describeImage(inference, elephantPath, 'Identify the animal. Answer in one word.')
+    recordCacheImprovement(modelConfig, 'vision-cache', vCold, vWarm)
+    const vc1 = vc(vCold.stats)
+    const vc2 = vc(vWarm.stats)
+    t.comment(`${modelConfig.label} vision-cache cold=${JSON.stringify(vc1)} warm=${JSON.stringify(vc2)}`)
+    t.ok(vc2.hits > vc1.hits, 'vision-cache warm run hit the embedding cache')
+
+    // 2) KV cache — stateful (same cacheKey + saveCacheToDisk → the warm run
+    //    reuses the KV prefix and skips prefill). Same image AND same prompt so
+    //    the prefix matches; the vision cache is already hot from step 1, so
+    //    this delta isolates the LLM-prefill skip.
+    const kvKey = `vision-cache-perf-${modelConfig.label}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    const kvPrompt = 'Describe the animal in this image.'
+    const kvCold = await describeImage(inference, elephantPath, kvPrompt, { cacheKey: kvKey, saveCacheToDisk: true })
+    const kvWarm = await describeImage(inference, elephantPath, kvPrompt, { cacheKey: kvKey, saveCacheToDisk: true })
+    recordCacheImprovement(modelConfig, 'kv-cache', kvCold, kvWarm)
+    const kvColdPrompt = Number((kvCold.stats && kvCold.stats.promptTokens) || 0)
+    const kvWarmPrompt = Number((kvWarm.stats && kvWarm.stats.promptTokens) || 0)
+    t.comment(`${modelConfig.label} kv-cache cold promptTokens=${kvColdPrompt} warm promptTokens=${kvWarmPrompt}`)
+    t.ok(kvWarmPrompt <= kvColdPrompt, 'kv-cache warm run re-evaluated no more prompt tokens than the cold run')
   })
 }
 

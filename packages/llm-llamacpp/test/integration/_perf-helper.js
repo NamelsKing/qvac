@@ -270,6 +270,16 @@ function _num (v) {
  *                                  'Qwen3-1.7B-Q4_0'). Surfaces as the
  *                                  Model column in the perf renderer.
  * @param {string} [extra._output]  Generated text (will be capped for mobile).
+ * @param {Object} [extra.extraMetrics] Extra NUMERIC metrics merged into the
+ *                                  recorded row (e.g. cache-hit improvement
+ *                                  fields like ttft_saved_ms / ttft_speedup_pct).
+ *                                  summarize() averages them like any other
+ *                                  numeric metric. Null/non-finite values are
+ *                                  dropped so they don't pollute the row.
+ * @param {Object} [extra.categorical] Extra STRING metrics merged onto the row
+ *                                  (e.g. { cache_state: 'warm (hit)' }). The
+ *                                  aggregator routes string metric values into
+ *                                  its categorical map for the detail tables.
  */
 function recordPerformance (label, totalTime, extra) {
   const stats = (extra && extra.stats) || null
@@ -295,7 +305,7 @@ function recordPerformance (label, totalTime, extra) {
     decodeMs = Math.round((generatedTokens / tps) * 1000)
   }
 
-  _perfReporter.record(label, {
+  const metrics = {
     backend,
     platform: platformLabel,
     total_time_ms: Math.round(totalTime),
@@ -310,7 +320,24 @@ function recordPerformance (label, totalTime, extra) {
     generated_tokens: generatedTokens,
     prompt_tokens: promptTokens,
     tps: tps !== null ? Number(tps.toFixed(2)) : null
-  }, {
+  }
+
+  // QVAC-19118 (A2): merge optional extra numeric metrics (cache-hit
+  // improvement fields) and categorical strings (cache_state). Drop
+  // null / non-finite numbers so the row stays clean and the aggregator
+  // never tries to summarize a non-number.
+  if (extra && extra.extraMetrics) {
+    for (const [k, v] of Object.entries(extra.extraMetrics)) {
+      if (typeof v === 'number' && Number.isFinite(v)) metrics[k] = v
+    }
+  }
+  if (extra && extra.categorical) {
+    for (const [k, v] of Object.entries(extra.categorical)) {
+      if (v != null) metrics[k] = String(v)
+    }
+  }
+
+  _perfReporter.record(label, metrics, {
     scenario: (extra && extra.scenario) || 'default',
     model: (extra && extra.model) || null,
     execution_provider: effectiveDevice,

@@ -67,7 +67,14 @@ const METRIC_LABELS = {
   cold_rtf: 'Cold RTF',
   model_load_ms: 'Load time',
   ttfa_ms: 'TTFA',
-  inter_chunk_p95_ms: 'Inter-chunk P95'
+  inter_chunk_p95_ms: 'Inter-chunk P95',
+  // QVAC-19118 (A2): cache-hit improvement metrics (vision / KV cache).
+  cold_ttft_ms: 'Cold TTFT',
+  ttft_saved_ms: 'TTFT saved',
+  ttft_speedup_pct: 'TTFT faster',
+  cold_total_ms: 'Cold total',
+  total_saved_ms: 'Total saved',
+  total_speedup_pct: 'Total faster'
 }
 
 function metricLabel (key) {
@@ -77,6 +84,8 @@ function metricLabel (key) {
 function formatMetricValue (key, value) {
   if (value === null || value === undefined) return '-'
   if (key.endsWith('_ms')) return `${Math.round(value)}ms`
+  // QVAC-19118 (A2): cache-hit speedup percentages (ttft_speedup_pct, ...).
+  if (key.endsWith('_pct')) return `${value.toFixed(1)}%`
   if (key === 'tps') return `${value.toFixed(2)} t/s`
   if (key === 'real_time_factor' || key === 'rtf_p50' || key === 'rtf_p95' || key === 'cold_rtf') {
     return value.toFixed(4)
@@ -281,6 +290,153 @@ function generateDeviceDetailTables (aggregated, addonType) {
   return lines.join('\n')
 }
 
+// QVAC-19118 (A2): the dedicated "Cache Hit Improvement" section. Scans for the
+// warm rows emitted by the cache-perf test (they carry ttft_speedup_pct) and
+// shows, per device/model, how much TTFT + total time a cache hit saved. Rows
+// are grouped by cache type (the row's scenario: vision-cache | kv-cache). The
+// warm row is self-contained (it carries cold_ttft_ms plus its own ttft_ms), so
+// no cold/warm pairing across rows is required.
+const _CACHE_SCENARIO_LABELS = {
+  'vision-cache': 'Vision prefix cache (image embeddings reused)',
+  'kv-cache': 'KV cache (prompt prefix reused)'
+}
+
+function _cacheCell (key, summary) {
+  if (!summary || summary.mean == null) return '-'
+  return formatMetricValue(key, summary.mean)
+}
+
+function generateCacheImprovementSection (aggregated) {
+  const { devices, scenarios = {}, categorical = {} } = aggregated
+  const deviceNames = Object.keys(devices || {})
+  if (!deviceNames.length) return ''
+
+  // Collect warm rows (those carrying ttft_speedup_pct) keyed by cache type.
+  const byType = {}
+  for (const devName of deviceNames) {
+    const tests = devices[devName] || {}
+    for (const [testName, metrics] of Object.entries(tests)) {
+      if (!metrics || !metrics.ttft_speedup_pct || metrics.ttft_speedup_pct.mean == null) continue
+      const scn = (scenarios[devName] && scenarios[devName][testName]) || 'cache'
+      if (!byType[scn]) byType[scn] = []
+      const cats = (categorical[devName] && categorical[devName][testName]) || {}
+      byType[scn].push({ device: _shortDeviceName(devName), model: cats.model || '-', metrics })
+    }
+  }
+
+  const types = Object.keys(byType)
+  if (!types.length) return ''
+
+  // Stable order: vision-cache first, then kv-cache, then any extras.
+  const order = ['vision-cache', 'kv-cache']
+  types.sort((a, b) => {
+    const ia = order.indexOf(a)
+    const ib = order.indexOf(b)
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
+  })
+
+  const lines = []
+  lines.push('### Cache Hit Improvement')
+  lines.push('')
+  lines.push('> _Cold = first request (cache miss). Warm = repeat request (cache hit). Higher % = faster._')
+  lines.push('')
+
+  for (const scn of types) {
+    const rows = byType[scn]
+    if (!rows.length) continue
+    rows.sort((a, b) => a.device.localeCompare(b.device) || a.model.localeCompare(b.model))
+    lines.push(`#### ${_CACHE_SCENARIO_LABELS[scn] || scn}`)
+    lines.push('')
+    const header = ['Device', 'Model', 'Cold TTFT', 'Warm TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
+    lines.push('| ' + header.join(' | ') + ' |')
+    lines.push('| ' + header.map(() => '---').join(' | ') + ' |')
+    for (const r of rows) {
+      const m = r.metrics
+      lines.push('| ' + [
+        r.device,
+        r.model,
+        _cacheCell('cold_ttft_ms', m.cold_ttft_ms),
+        _cacheCell('ttft_ms', m.ttft_ms),
+        _cacheCell('ttft_saved_ms', m.ttft_saved_ms),
+        _cacheCell('ttft_speedup_pct', m.ttft_speedup_pct),
+        _cacheCell('total_saved_ms', m.total_saved_ms),
+        _cacheCell('total_speedup_pct', m.total_speedup_pct)
+      ].join(' | ') + ' |')
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+// QVAC-19118 (A2): HTML twin of generateCacheImprovementSection so the
+// self-contained HTML artifact has parity with the GitHub step summary.
+function _buildHtmlCacheSection (aggregated) {
+  const { devices, scenarios = {}, categorical = {} } = aggregated
+  const deviceNames = Object.keys(devices || {})
+  if (!deviceNames.length) return ''
+
+  const byType = {}
+  for (const devName of deviceNames) {
+    const tests = devices[devName] || {}
+    for (const [testName, metrics] of Object.entries(tests)) {
+      if (!metrics || !metrics.ttft_speedup_pct || metrics.ttft_speedup_pct.mean == null) continue
+      const scn = (scenarios[devName] && scenarios[devName][testName]) || 'cache'
+      if (!byType[scn]) byType[scn] = []
+      const cats = (categorical[devName] && categorical[devName][testName]) || {}
+      byType[scn].push({ device: _shortDeviceName(devName), model: cats.model || '-', metrics })
+    }
+  }
+
+  const types = Object.keys(byType)
+  if (!types.length) return ''
+  const order = ['vision-cache', 'kv-cache']
+  types.sort((a, b) => {
+    const ia = order.indexOf(a)
+    const ib = order.indexOf(b)
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
+  })
+
+  let blocks = ''
+  for (const scn of types) {
+    const rows = byType[scn]
+    if (!rows.length) continue
+    rows.sort((a, b) => a.device.localeCompare(b.device) || a.model.localeCompare(b.model))
+    const headerLabels = ['Device', 'Model', 'Cold TTFT', 'Warm TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
+    const headerCells = headerLabels.map(h => `<th>${escapeHtml(h)}</th>`).join('')
+    let bodyRows = ''
+    for (const r of rows) {
+      const m = r.metrics
+      const cells = [
+        r.device,
+        r.model,
+        _cacheCell('cold_ttft_ms', m.cold_ttft_ms),
+        _cacheCell('ttft_ms', m.ttft_ms),
+        _cacheCell('ttft_saved_ms', m.ttft_saved_ms),
+        _cacheCell('ttft_speedup_pct', m.ttft_speedup_pct),
+        _cacheCell('total_saved_ms', m.total_saved_ms),
+        _cacheCell('total_speedup_pct', m.total_speedup_pct)
+      ]
+      bodyRows += '<tr>' + cells.map(c => `<td>${escapeHtml(c)}</td>`).join('') + '</tr>'
+    }
+    blocks += `
+      <div class="test-block">
+        <h3 class="scenario-name">${escapeHtml(_CACHE_SCENARIO_LABELS[scn] || scn)}</h3>
+        <table class="detail-table">
+          <thead><tr>${headerCells}</tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>`
+  }
+
+  if (!blocks) return ''
+  return `
+    <section class="device-card detail-card">
+      <h2 class="device-name">Cache Hit Improvement <span class="detail-sub">(cold miss → warm hit · higher % = faster)</span></h2>
+${blocks}
+    </section>`
+}
+
 function generateMarkdownReport (aggregated, opts) {
   const options = opts || {}
   const lines = []
@@ -314,6 +470,15 @@ function generateMarkdownReport (aggregated, opts) {
   // that runner, etc.).
   lines.push('> _`-` = not run on this device._')
   lines.push('')
+
+  // QVAC-19118 (A2): lead with the cache-hit improvement summary when the
+  // cache-perf test recorded any warm rows. Rendered above the per-metric
+  // comparison tables so the cache wins are the first thing a reviewer sees.
+  const cacheSection = generateCacheImprovementSection(aggregated)
+  if (cacheSection) {
+    lines.push(cacheSection)
+    lines.push('')
+  }
 
   const deviceNames = Object.keys(devices)
   if (!deviceNames.length) return lines.join('\n') + '\n'
@@ -1020,6 +1185,10 @@ function generateHtmlReport (aggregated, opts) {
     ? _buildHtmlDetailSections(aggregated, options.addonType || 'vision')
     : ''
 
+  // QVAC-19118 (A2): cache-hit improvement summary (rendered regardless of
+  // includeDeviceDetails — it's a top-level rollup, not a per-device detail).
+  const cacheHtml = _buildHtmlCacheSection(aggregated)
+
   let qualitySection = ''
   const qualityDetails = aggregated.quality_details || {}
 
@@ -1571,6 +1740,8 @@ function generateHtmlReport (aggregated, opts) {
     <span>Devices: <strong>${Object.keys(devices).length}</strong></span>
   </div>
 </header>
+
+${cacheHtml ? `<h2 class="section-divider">Cache Hit Improvement</h2>` + cacheHtml : ''}
 
 ${detailSections ? `<h2 class="section-divider">Per-Device Summary</h2>` + detailSections : ''}
 
