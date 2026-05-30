@@ -69,10 +69,10 @@ const METRIC_LABELS = {
   ttfa_ms: 'TTFA',
   inter_chunk_p95_ms: 'Inter-chunk P95',
   // QVAC-19118 (A2): cache-hit improvement metrics (vision / KV cache).
-  cold_ttft_ms: 'Cold TTFT',
+  cold_ttft_ms: 'No-hit TTFT',
   ttft_saved_ms: 'TTFT saved',
   ttft_speedup_pct: 'TTFT faster',
-  cold_total_ms: 'Cold total',
+  cold_total_ms: 'No-hit total',
   total_saved_ms: 'Total saved',
   total_speedup_pct: 'Total faster'
 }
@@ -247,7 +247,10 @@ function generateDeviceDetailTables (aggregated, addonType) {
     lines.push('')
 
     const buckets = _groupTestsByScenario(testNames, scenarios[devName])
+    // QVAC-19118 (A2): cache scenarios live in the dedicated Cache Hit
+    // Improvement section, not the per-device detail tables.
     const orderedScenarios = _sortedScenarios(Object.keys(buckets))
+      .filter(scn => !_CACHE_SCENARIOS.has(scn))
     const showScenarioHeading = orderedScenarios.length > 1 ||
       (orderedScenarios.length === 1 && orderedScenarios[0] !== 'default')
 
@@ -301,6 +304,12 @@ const _CACHE_SCENARIO_LABELS = {
   'kv-cache': 'KV cache (prompt prefix reused)'
 }
 
+// QVAC-19118 (A2): scenarios owned by the dedicated "Cache Hit Improvement"
+// section. They are excluded from the generic per-metric / per-device tables
+// (Total / Decode / TPS / tokens / ...) because a cache hit only affects
+// TTFT/prefill + total time — the other columns are noise for these rows.
+const _CACHE_SCENARIOS = new Set(['vision-cache', 'kv-cache'])
+
 function _cacheCell (key, summary) {
   if (!summary || summary.mean == null) return '-'
   return formatMetricValue(key, summary.mean)
@@ -338,7 +347,7 @@ function generateCacheImprovementSection (aggregated) {
   const lines = []
   lines.push('### Cache Hit Improvement')
   lines.push('')
-  lines.push('> _Cold = first request (cache miss). Warm = repeat request (cache hit). Higher % = faster._')
+  lines.push('> _No hit = first request (cache miss). Hit = repeat request (cache hit). Higher % = faster._')
   lines.push('')
 
   for (const scn of types) {
@@ -347,7 +356,7 @@ function generateCacheImprovementSection (aggregated) {
     rows.sort((a, b) => a.device.localeCompare(b.device) || a.model.localeCompare(b.model))
     lines.push(`#### ${_CACHE_SCENARIO_LABELS[scn] || scn}`)
     lines.push('')
-    const header = ['Device', 'Model', 'Cold TTFT', 'Warm TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
+    const header = ['Device', 'Model', 'No-hit TTFT', 'Hit TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
     lines.push('| ' + header.join(' | ') + ' |')
     lines.push('| ' + header.map(() => '---').join(' | ') + ' |')
     for (const r of rows) {
@@ -402,7 +411,7 @@ function _buildHtmlCacheSection (aggregated) {
     const rows = byType[scn]
     if (!rows.length) continue
     rows.sort((a, b) => a.device.localeCompare(b.device) || a.model.localeCompare(b.model))
-    const headerLabels = ['Device', 'Model', 'Cold TTFT', 'Warm TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
+    const headerLabels = ['Device', 'Model', 'No-hit TTFT', 'Hit TTFT', 'TTFT Saved', 'TTFT Faster', 'Total Saved', 'Total Faster']
     const headerCells = headerLabels.map(h => `<th>${escapeHtml(h)}</th>`).join('')
     let bodyRows = ''
     for (const r of rows) {
@@ -432,7 +441,7 @@ function _buildHtmlCacheSection (aggregated) {
   if (!blocks) return ''
   return `
     <section class="device-card detail-card">
-      <h2 class="device-name">Cache Hit Improvement <span class="detail-sub">(cold miss → warm hit · higher % = faster)</span></h2>
+      <h2 class="device-name">Cache Hit Improvement <span class="detail-sub">(no hit → hit · higher % = faster)</span></h2>
 ${blocks}
     </section>`
 }
@@ -546,12 +555,16 @@ function generateMarkdownReport (aggregated, opts) {
     }
     testScenario[t.full] = scn
   }
-  const scenariosSeen = _sortedScenarios([...new Set(parsed.map(t => testScenario[t.full]))])
+  // QVAC-19118 (A2): cache scenarios are rendered by the dedicated Cache Hit
+  // Improvement section; exclude them from the generic per-metric tables so
+  // they don't appear under Decode / TPS / tokens / etc.
+  const nonCacheParsed = parsed.filter(t => !_CACHE_SCENARIOS.has(testScenario[t.full]))
+  const scenariosSeen = _sortedScenarios([...new Set(nonCacheParsed.map(t => testScenario[t.full]))])
   const showScenarioHeading = scenariosSeen.length > 1 ||
     (scenariosSeen.length === 1 && scenariosSeen[0] !== 'default')
 
   for (const metricSpec of SUMMARY_METRICS) {
-    const hasAnyData = parsed.some(t => deviceNames.some(d => {
+    const hasAnyData = nonCacheParsed.some(t => deviceNames.some(d => {
       const m = devices[d] && devices[d][t.full] && devices[d][t.full][metricSpec.key]
       return m && m.mean != null
     }))
@@ -561,7 +574,7 @@ function generateMarkdownReport (aggregated, opts) {
     lines.push('')
 
     for (const scn of scenariosSeen) {
-      const scopedTests = parsed.filter(t => testScenario[t.full] === scn)
+      const scopedTests = nonCacheParsed.filter(t => testScenario[t.full] === scn)
       if (!scopedTests.length) continue
 
       // QVAC-17830: per-scenario column filtering. The cross-platform
@@ -1017,7 +1030,10 @@ function _buildHtmlDetailSections (aggregated, addonType) {
     const gpuLabel = meta.gpu ? ` \u00b7 GPU: ${meta.gpu}` : ''
 
     const buckets = _groupTestsByScenario(testNames, scenarios[devName])
+    // QVAC-19118 (A2): cache scenarios live in the dedicated Cache Hit
+    // Improvement section, not the per-device detail tables.
     const orderedScenarios = _sortedScenarios(Object.keys(buckets))
+      .filter(scn => !_CACHE_SCENARIOS.has(scn))
     const showScenarioHeading = orderedScenarios.length > 1 ||
       (orderedScenarios.length === 1 && orderedScenarios[0] !== 'default')
 
@@ -1120,6 +1136,12 @@ function generateHtmlReport (aggregated, opts) {
     let tables = ''
 
     for (const [testName, metrics] of Object.entries(tests)) {
+      // QVAC-19118 (A2): cache scenarios are shown only in the dedicated Cache
+      // Hit Improvement section, not as generic per-test metric cards.
+      const scn = (aggregated.scenarios && aggregated.scenarios[deviceName] &&
+        aggregated.scenarios[deviceName][testName]) || 'default'
+      if (_CACHE_SCENARIOS.has(scn)) continue
+
       const metricKeys = Object.keys(metrics).filter(k => metrics[k])
       if (!metricKeys.length) continue
 

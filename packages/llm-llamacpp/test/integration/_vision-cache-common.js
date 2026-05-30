@@ -63,13 +63,14 @@ function vc (stats) {
   }
 }
 
-// QVAC-19118 (A2): record a cold→warm cache pair to the shared perf reporter so
+// QVAC-19118 (A2): record a no-hit→hit cache pair to the shared perf reporter so
 // the Combined Performance Report's "Cache Hit Improvement" section can show how
 // much a cache hit saves. `scenario` is 'vision-cache' (stateless image re-send
 // → CLIP encode + mmproj projection skipped) or 'kv-cache' (same prefix re-sent
 // with a cacheKey → prefill skipped). The derived improvement fields are stashed
-// on the WARM row so each row is self-contained in the report (no cross-row
-// pairing needed). `cold`/`warm` are describeImage() results
+// on the HIT row so each row is self-contained in the report (no cross-row
+// pairing needed). `cold` is the first request (cache miss = no hit) and `warm`
+// the repeat (cache hit); both are describeImage() results
 // ({ generatedText, startTime, endTime, stats }).
 function recordCacheImprovement (modelConfig, scenario, cold, warm) {
   const ep = useCpu ? 'cpu' : 'gpu'
@@ -80,21 +81,21 @@ function recordCacheImprovement (modelConfig, scenario, cold, warm) {
   const pct = (c, w) => (c > 0 ? Number((100 * (c - w) / c).toFixed(2)) : null)
 
   const base = `${modelConfig.label} elephant [${scenario}`
-  recordPerformance(`${base} cold]`, coldTotal, {
+  recordPerformance(`${base} no-hit]`, coldTotal, {
     stats: cold.stats,
     scenario,
     model: modelConfig.label,
     deviceId: ep,
     _output: cold.generatedText,
-    categorical: { cache_state: 'cold (miss)' }
+    categorical: { cache_state: 'no hit' }
   })
-  recordPerformance(`${base} warm]`, warmTotal, {
+  recordPerformance(`${base} hit]`, warmTotal, {
     stats: warm.stats,
     scenario,
     model: modelConfig.label,
     deviceId: ep,
     _output: warm.generatedText,
-    categorical: { cache_state: 'warm (hit)' },
+    categorical: { cache_state: 'hit' },
     extraMetrics: {
       cold_ttft_ms: Math.round(coldTtft),
       ttft_saved_ms: Math.round(coldTtft - warmTtft),
