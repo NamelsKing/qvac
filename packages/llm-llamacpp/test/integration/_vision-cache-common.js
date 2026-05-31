@@ -340,6 +340,27 @@ function runVisionCacheTests (modelConfig) {
     t.comment(`${modelConfig.label} kv-cache cold promptTokens=${kvColdPrompt} warm promptTokens=${kvWarmPrompt}`)
     t.ok(kvWarmPrompt <= kvColdPrompt, 'kv-cache warm run re-evaluated no more prompt tokens than the cold run')
   })
+
+  // --- Test 5 (A3): context overflow returns a structured error, not a crash.
+  // Load with a small ctx_size + large n_predict so the A3 guard rejects the
+  // prefill (image tokens + n_predict + safety > n_ctx) BEFORE any decode. The
+  // addon must surface a catchable ContextOverflow error rather than crash the
+  // process. t.exception.all is the documented escape hatch for native-error
+  // rejections that would otherwise trip Bare's unhandled-rejection guard
+  // (exit 134) — see grammar.test.js.
+  test(`${modelConfig.label}: context overflow returns a structured error, not a crash`, {
+    timeout: TEST_TIMEOUT
+  }, async t => {
+    const inference = await setup(t, modelConfig, { ctx_size: '512', n_predict: '1024' })
+    const elephantPath = getMediaPath(ELEPHANT)
+    t.ok(fs.existsSync(elephantPath), `${ELEPHANT} fixture should exist`)
+
+    await t.exception.all(
+      () => describeImage(inference, elephantPath, 'Describe this image in detail.'),
+      /overflow/i,
+      'overflowing prefill rejects with a ContextOverflow error instead of crashing'
+    )
+  })
 }
 
 module.exports = {
