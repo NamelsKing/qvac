@@ -169,59 +169,41 @@ safeTest('run | run: second run() throws busy error', { timeout: 600_000 }, asyn
   t.ok(!firstError, 'first response did not fail')
 })
 
-// ===========================================================================
-// Resource-release coverage (QVAC-18929)
-//
-// The suite above proves cancel-during-run, but never tests tearing the model
-// down while a job is still in flight, nor that calling run() after unload()
-// surfaces a clean error instead of crashing. AddonJs.hpp documents a
-// use-after-free risk on this path, so these guard the teardown contract.
-// Assertions are non-empty / type / clean-error only — never exact output.
-// ===========================================================================
+// Resource-release coverage (QVAC-18929): teardown while a job is in flight,
+// and use-after-unload. AddonJs.hpp documents a use-after-free risk on these
+// paths. Assertions are non-empty / type / clean-error only.
 
-// ---------------------------------------------------------------------------
-// run | unload: tearing down mid-inference must not crash, and the model
-// must be reusable afterwards.
-//
-// WHY: apps navigate away / close the model while a generation is streaming.
-// If unload() races the native job badly it can use-after-free (documented in
-// AddonJs.hpp). We don't await the first run — we unload while it's live.
-// ---------------------------------------------------------------------------
+// unload() mid-inference must not crash, and the model must be reusable after.
 safeTest('run | unload: unload during active inference does not crash, model reusable', { timeout: 600_000 }, async t => {
   const { model } = await setupModel(t, { n_predict: '256' })
 
-  // Start a long generation but do NOT await it — we want it in flight.
   const response = await model.run(LONG_PROMPT)
-  // Drain the response in the background so an unhandled rejection from the
-  // interrupted job doesn't abort the process; we only care that unload is safe.
+  // Drain in the background so the interrupted job's rejection doesn't abort
+  // the process; we only care that unload is safe while a job is live.
   response.onError(() => {})
   response.await().catch(() => {})
 
   await model.unload()
   t.pass('unload() during active inference completed without crashing')
 
-  // The model must be usable again after the mid-flight teardown.
   await model.load()
   const reuse = await model.run(BASE_PROMPT)
   const output = await collectResponse(reuse)
   t.ok(output.length > 0, 'model still generates after unload-during-inference + reload')
 })
 
-// ---------------------------------------------------------------------------
-// unloaded | run: run() after unload() must throw a clear error, not segfault.
-// ---------------------------------------------------------------------------
+// run() after unload() must throw/reject cleanly, not segfault.
 safeTest('unloaded | run: run after unload throws a clean error', { timeout: 600_000 }, async t => {
   const { model } = await setupModel(t)
 
-  // Prove it works, then unload.
   const first = await model.run(BASE_PROMPT)
   await collectResponse(first)
   await model.unload()
 
   try {
     const resp = await model.run(BASE_PROMPT)
-    // Some addons accept the call but fail the response; treat either as a
-    // clean rejection as long as it doesn't crash.
+    // Throwing on run() or failing the response both count, as long as it
+    // doesn't crash.
     await collectResponse(resp)
     t.fail('expected run() after unload to throw or reject')
   } catch (err) {
@@ -231,13 +213,8 @@ safeTest('unloaded | run: run after unload throws a clean error', { timeout: 600
   }
 })
 
-// ---------------------------------------------------------------------------
-// run | cancel | unload: cancel mid-inference then immediately unload.
-//
-// WHY: "stop and close" is a common UX. cancel() resolves asynchronously and
-// the native job thread is still unwinding; an immediate unload() must not
-// race into a use-after-free. C++ comments flag this ordering.
-// ---------------------------------------------------------------------------
+// cancel() resolves async while the native job is still unwinding; an immediate
+// unload() must not race into a use-after-free.
 safeTest('run | cancel | unload: cancel then immediate unload does not crash', { timeout: 600_000 }, async t => {
   const { model } = await setupModel(t, { n_predict: '256' })
 
@@ -245,7 +222,6 @@ safeTest('run | cancel | unload: cancel then immediate unload does not crash', {
   response.onError(() => {})
   response.await().catch(() => {})
 
-  // Fire cancel and unload back-to-back without draining in between.
   model.cancel().catch(() => {})
   await model.unload()
 

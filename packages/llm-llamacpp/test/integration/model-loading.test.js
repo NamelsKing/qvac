@@ -121,19 +121,6 @@ safeTest('model unload is clean and idempotent', { timeout: 600_000 }, async t =
   }
 })
 
-// NOTE (QVAC-18929): a multi-cycle load/unload "RSS leak tripwire" was
-// considered here but intentionally NOT added. Two existing mechanisms already
-// cover it better:
-//   1. multi-instance.test.js already loops load -> run -> unload 6x.
-//   2. The native unit tests build with -fsanitize=address and run in CI with
-//      LSAN suppressions (cpp-tests-llm.yml), which detects real native leaks
-//      precisely — far better than a JS process-wide RAM heuristic, which can't
-//      see GPU/VRAM and is dominated by other-process noise.
-// The llm addon also exposes no backend/state observable (no
-// getActiveBackendName()/status()), so the NMT-style "backend reports Unloaded
-// after unload" assertion is not expressible here. Resource-release on this
-// addon is therefore owned by the ASan/LSAN C++ job, not a JS test.
-
 const SHARDED_MODEL = {
   name: 'Qwen3-0.6B-UD-IQ1_S-00001-of-00003.gguf',
   baseUrl: 'https://huggingface.co/jmb95/Qwen3-0.6B-UD-IQ1_S-sharded/resolve/main/'
