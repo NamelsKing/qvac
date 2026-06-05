@@ -4,9 +4,12 @@
 // the 30-minute mobile cap. Asserts an aurora keyword + records perf.
 
 const test = require('brittle')
-const { QWEN35_MODEL, IMAGE_CASES, runVlmImagePerf } = require('./_vlm-image-perf.js')
+const { QWEN35_MODEL, IMAGE_CASES, isBenchmarkRun, runVlmImagePerf } = require('./_vlm-image-perf.js')
 
-test('Qwen3.5-VL image perf [high-res aurora]', { timeout: 1_800_000 }, async t => {
+// QVAC-19368: aurora is the heaviest image; skip it on normal on-PR runs
+// (elephant + fruit-plate still run) so the Android leg stays under ~1h.
+// The benchmark (QVAC_PERF_RUNS>1) runs all 3 images.
+test('Qwen3.5-VL image perf [high-res aurora]', { timeout: 1_800_000, skip: !isBenchmarkRun }, async t => {
   await runVlmImagePerf(t, QWEN35_MODEL, IMAGE_CASES['high-res-aurora'])
 })
 

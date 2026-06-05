@@ -198,9 +198,16 @@ async function runVlmImagePerf (t, modelDef, imageCase) {
   }
 }
 
+// QVAC-19368: the benchmark workflow bumps QVAC_PERF_RUNS to 3; normal
+// on-PR leaves it at the default 1. Used to skip the heaviest image
+// (aurora) on PRs so the Android run stays under ~1h, while the benchmark
+// still covers all 3 images.
+const isBenchmarkRun = PERF_RUNS > 1
+
 module.exports = {
   IMAGE_CASES,
   GEMMA4_MODEL,
   QWEN35_MODEL,
+  isBenchmarkRun,
   runVlmImagePerf
 }
