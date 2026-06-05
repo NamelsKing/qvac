@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.19.0] - 2026-06-02
+
+### Changed
+
+- `feat[bc]`: `RuntimeStats.context_size` now reports the active runtime llama context size. Use the new `RuntimeStats.trained_context_size` field for the model's trained context size.
+- The embed runtime now defaults `ctx_size` to the model's trained context size and caps oversized `ctx_size` requests to that value before creating the llama context. The cap also applies on streamed loads (single-GGUF and sharded) by parsing GGUF metadata from the first streamed chunk before the weights engine consumes it, mirroring the `ModelMetaData` pattern used by `llm-llamacpp`.
+
+### Fixed
+
+- Context overflow validation now compares tokenized inputs against the active runtime context size (`llama_n_ctx`), which is itself capped to the trained context.
+- `BertModel::setWeightsForFile` now tracks fulfilled GGUF shards in a per-instance `std::atomic<int>` instead of a function-local `static int`, so multiple concurrent `BertInterface` instances no longer share (and miscount) shard-fulfillment state.
+- `BertModel` now resolves sharded model basenames to absolute paths relative to the model directory before metadata inspection and disk-shards loading, so the trained-context cap and `llama_model_load_from_splits` work correctly when the working directory differs from the model directory.
+- `readTrainedContextSize` now logs an `ERROR`-level diagnostic when GGUF metadata cannot be read on either streamed or non-streaming loads (previously failed silently and reverted to llama.cpp's default `ctx_size`).
+
+## [0.18.2] - 2026-06-03
+
+### Fixed
+
+- **Multi-GPU params rejected on Android/iOS**: passing `split-mode` (non-`none`), `main-gpu`, or `tensor-split` on a mobile device now throws `InvalidArgument` immediately in `setupParams`, before any backend selection occurs. Previously these parameters could silently cause undefined behaviour on mobile. Use single-GPU config on mobile.
+
+## Pull Requests
+
+- [#2352](https://github.com/tetherto/qvac/pull/2352) - QVAC-18802: reject multi-GPU config on Android/iOS
+
+## [0.18.1] - 2026-06-02
+
+### Changed
+
+- Bumped the `qvac-lib-inference-addon-cpp` vcpkg dependency to `1.2.1`.
+
+## [0.18.0] - 2026-05-29
+
+### Fixed
+
+- **Structured cancellation error on mid-decode cancel**: When an embed request was cancelled mid-decode, the addon threw a generic `"Failed to get sequence embeddings"` error instead of the structured `"Job cancelled"` message that the SDK maps to `InferenceCancelledError` (code 52419). The addon now throws `"Job cancelled"` on all cancel paths — matching the behaviour of the completion addon (`llm-llamacpp`). Additionally, `batchDecode` now throws immediately when `llama_decode` fails instead of continuing to read stale/null embeddings.
+
+## [0.17.1] - 2026-05-26
+
+### Changed
+
+- Updated the `qvac-fabric` vcpkg dependency to registry version `8828.0.2`.
+
+## [0.17.0] - 2026-05-23
+
+### Changed
+
+- Updated the `qvac-fabric` vcpkg dependency to registry version `8828.0.1`, matching the fabric pin used by the related addons in this PR.
+- Reduced the iOS large-batch embedding stress-test size so the test still exercises the failure path without being killed by the platform memory limit.
+
 ## [0.16.0] - 2026-05-10
 
 ### Changed

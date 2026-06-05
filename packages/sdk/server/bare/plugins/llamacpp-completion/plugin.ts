@@ -36,6 +36,11 @@ import {
 } from "@/server/bare/runtime";
 import { generateServerRequestId } from "@/server/bare/runtime/request-id";
 import { getServerLogger } from "@/logging";
+import { ContextOverflowError } from "@/utils/errors-server";
+import {
+  isAddonContextOverflowError,
+  parseContextOverflowMessage,
+} from "@/server/bare/plugins/llamacpp-completion/ops/context-overflow";
 
 
 function createLlmModel(
@@ -140,13 +145,28 @@ export const llmPlugin = definePlugin({
         // client can target this run with `cancel({ requestId })`.
         // Falls back to a server-generated id if the client (e.g. an
         // older release) didn't send one.
-        await using ctx = getRequestRegistry().begin({
+        await using ctx = await getRequestRegistry().begin({
           requestId: request.requestId ?? generateServerRequestId(),
           kind: "completion",
           modelId: request.modelId,
         });
 
         const requestLogger = withRequestContext(getServerLogger(), ctx);
+
+        // begin() can return already-aborted when the client cancels while
+        // this completion is queued behind another same-model one. It never
+        // decoded, so it must not touch the shared native context — emit a
+        // cancelled terminal and return. Boolean(...) keeps ctx.signal.aborted
+        // a boolean so the mid-stream check below isn't narrowed to false.
+        const abortedBeforeRun = Boolean(ctx.signal.aborted);
+        if (abortedBeforeRun) {
+          yield {
+            type: "completionStream" as const,
+            done: true,
+            events: normalizer.finish({ stopReason: "cancelled" as const }),
+          };
+          return;
+        }
 
         const stream = completion(
           {
@@ -180,12 +200,8 @@ export const llmPlugin = definePlugin({
           }
 
           const { modelExecutionMs, stats, toolCalls } = result.value;
-          // `stopReason: "cancelled"` rides the success-done path: the
-          // events stream ends normally, the cancellation is observable
-          // via the last event's `stopReason`, and the client-side
-          // `CompletionRun` aggregates (`final` / `text` / `toolCalls` /
-          // `stats`) reject with `InferenceCancelledError` carrying the
-          // partial state.
+          // Cancellation rides the done path: observable via the last event's
+          // stopReason; client aggregates reject with InferenceCancelledError.
           const cancelled = ctx.signal.aborted;
           const terminalEvents = normalizer.finish({
             ...(stats && { stats }),
@@ -207,6 +223,27 @@ export const llmPlugin = definePlugin({
             },
             modelExecutionMs,
           );
+        } catch (err) {
+          // The llama.cpp addon emits a structured `ContextOverflow` status
+          // (LlmErrors.hpp::ContextOverflow = 14) when the prompt exceeds
+          // the model's `ctx_size`. Bare's `js_throw_error(env, code, msg)`
+          // surfaces it as a JS Error with `.code = "[ <addonId> :: ContextOverflow ]"`
+          // and `.message` carrying the C++-formatted detail. Rethrow as
+          // a typed `ContextOverflowError` so consumers can switch on the
+          // class (and `err.code === SDK_SERVER_ERROR_CODES.CONTEXT_OVERFLOW`)
+          // instead of substring-matching on the raw addon message.
+          if (isAddonContextOverflowError(err)) {
+            const { promptTokens, ctxSize } = parseContextOverflowMessage(
+              err instanceof Error ? err.message : "",
+            );
+            throw new ContextOverflowError(
+              promptTokens,
+              ctxSize,
+              request.modelId,
+              err,
+            );
+          }
+          throw err;
         } finally {
           await stream.return?.(undefined as never);
         }
@@ -260,6 +297,21 @@ export const llmPlugin = definePlugin({
             },
             modelExecutionMs,
           );
+        } catch (err) {
+          // Same addon, same overflow path as `completionStream`. Wrap so
+          // translate consumers can `instanceof ContextOverflowError` too.
+          if (isAddonContextOverflowError(err)) {
+            const { promptTokens, ctxSize } = parseContextOverflowMessage(
+              err instanceof Error ? err.message : "",
+            );
+            throw new ContextOverflowError(
+              promptTokens,
+              ctxSize,
+              request.modelId,
+              err,
+            );
+          }
+          throw err;
         } finally {
           await stream.return?.(undefined as never);
         }

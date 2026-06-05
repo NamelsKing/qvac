@@ -3,9 +3,18 @@ import type QvacLogger from '@qvac/logging'
 
 export type NumericLike = number | `${number}`
 
+/**
+ * Low-level addon shape exposed by `addon.js` (`SdInterface`). Both image
+ * and video modes flow through the same `runJob` entrypoint -- the native
+ * `SdModel::process()` dispatches on the `mode` field.
+ */
 export interface Addon {
   activate(): Promise<void>
-  runJob(params: GenerationParams & { mode: 'txt2img' | 'img2img' }): Promise<boolean>
+  runJob(
+    params:
+      | (GenerationParams & { mode: 'txt2img' | 'img2img' })
+      | { mode: 'txt2vid' | 'img2vid'; [key: string]: unknown }
+  ): Promise<boolean>
   cancel(): Promise<void>
   unload(): Promise<void>
 }
@@ -61,8 +70,20 @@ export type ScheduleType =
   | 'kl_optimal'
   | 'bong_tangent'
 
-/** Supported noise prediction types */
-export type PredictionType = 'auto' | 'eps' | 'v' | 'edm_v' | 'flow' | 'flux2_flow'
+/**
+ * Supported noise prediction types. `flux_flow` is kept for FLUX.1
+ * back-compat -- the C++ `SdCtxHandlers` still accepts it and the JS
+ * runtime validator in `index.js` matches both. New code should prefer
+ * `flux2_flow` for FLUX.2.
+ */
+export type PredictionType =
+  | 'auto'
+  | 'eps'
+  | 'v'
+  | 'edm_v'
+  | 'flow'
+  | 'flux_flow'
+  | 'flux2_flow'
 
 /** LoRA application mode */
 export type LoraApplyMode = 'auto' | 'immediately' | 'at_runtime'
@@ -73,7 +94,7 @@ export type CacheMode = 'disabled' | 'easycache' | 'ucache' | 'dbcache' | 'taylo
 export interface SdConfig {
   /** Number of CPU threads (-1 = auto) */
   threads?: NumericLike
-  /** Preferred compute device: 'gpu' (Metal/Vulkan) or 'cpu' */
+  /** Preferred compute device: 'gpu' (default; try GPU backends) or 'cpu' */
   device?: 'gpu' | 'cpu'
   /** Weight quantization type */
   type?: WeightType
@@ -170,6 +191,12 @@ export interface EsrganUpscalerConfig {
   upscaler_offload_params_to_cpu?: boolean
   /** Number of CPU threads for ESRGAN upscaler (-1 = auto) */
   upscaler_threads?: NumericLike
+  /**
+   * Compute device for the standalone upscaler: `gpu` by default (try GPU,
+   * fall back to CPU if unavailable) or `cpu`.
+   * `EsrganRuntimeStats.backendDevice` reports the device actually used.
+   */
+  device?: 'cpu' | 'gpu'
   /** Logging verbosity: 0=error, 1=warn, 2=info, 3=debug */
   verbosity?: NumericLike
   [key: string]: string | number | boolean | undefined
@@ -360,10 +387,20 @@ export interface EsrganRuntimeStats {
   height: number
   /** Number of ESRGAN passes used by the most recent upscale job */
   repeats: number
+  /**
+   * Actual compute device used by the ESRGAN upscaler after init / fallback
+   * (native 0/1 mapped to 'cpu' / 'gpu' in JS).
+   */
+  backendDevice?: 'cpu' | 'gpu'
 }
 
 export default class ImgStableDiffusion {
-  protected addon: Addon | null
+  /**
+   * Public for advanced/test access only -- the JS implementation also
+   * exposes this property, so the type must match. Prefer the high-level
+   * `run()` / `cancel()` / `unload()` methods in normal code.
+   */
+  addon: Addon | null
   opts: { stats?: boolean }
   logger: QvacLogger
   state: { configLoaded: boolean }

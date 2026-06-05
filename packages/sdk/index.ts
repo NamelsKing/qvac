@@ -35,6 +35,9 @@ export {
   invokePluginStream,
   diffusion,
   type DiffusionProgressTick,
+  classify,
+  video,
+  type VideoProgressTick,
   upscale,
   modelRegistryList,
   modelRegistrySearch,
@@ -51,6 +54,7 @@ export {
   type FinetuneHandle,
 } from "./client/api";
 export { close } from "./client";
+export { plugins } from "./client/plugins-factory";
 export {
   type LifecycleState,
   type ModelProgressUpdate,
@@ -94,6 +98,7 @@ export {
   type RagSaveStage,
   SDK_CLIENT_ERROR_CODES,
   SDK_SERVER_ERROR_CODES,
+  RAG_ERROR_CODES,
   type QvacConfig,
   type ModelInfo,
   type GetModelInfoParams,
@@ -109,9 +114,14 @@ export {
   type OCRClientParams,
   type OCRTextBlock,
   type OCROptions,
+  type ClassifyClientParams,
+  type ClassificationResult,
   type DiffusionClientParams,
   type DiffusionStreamResponse,
   type DiffusionStats,
+  type VideoClientParams,
+  type VideoStreamResponse,
+  type VideoStats,
   type UpscaleClientParams,
   type UpscaleStreamResponse,
   type UpscaleStats,
@@ -136,6 +146,7 @@ export {
   PLUGIN_OCR,
   PLUGIN_DIFFUSION,
   PLUGIN_VLA,
+  PLUGIN_CLASSIFICATION,
   SDK_DEFAULT_PLUGINS,
   type BuiltinPlugin,
   type ProfilerMode,
@@ -165,13 +176,15 @@ export { SUPPORTED_AUDIO_FORMATS } from "./constants/audio";
 // envelope, but consumers reach for it through `instanceof` on
 // `await run.final` / `run.text` / `run.toolCalls` / `run.stats`
 // rejections. `RequestRejectedByPolicyError` is thrown by
-// `RequestRegistry.begin(...)` when a registered concurrency policy
-// (e.g. `oneAtATimePerModel` on `completion`) rejects a new request;
-// it propagates out through the worker so the client can distinguish
-// "the request collided with another one" from "the request failed".
+// `await RequestRegistry.begin(...)` when a registered concurrency policy
+// refuses a new request. With the default queue policy a same-model
+// `completion` no longer rejects — it waits FIFO — so this now surfaces the
+// bounded-queue cases: `onOverflow: "reject"`, the per-model queue-depth cap,
+// or a `queueTimeoutMs` elapsing. It propagates out through the worker so the
+// client can distinguish "the model is saturated" from "the request failed".
 //
 // `RequestIdConflictError` and `RequestNotFoundError` are thrown by
-// `RequestRegistry.begin(...)` / `.end(...)` on UUID collisions and
+// `await RequestRegistry.begin(...)` / `.end(...)` on UUID collisions and
 // missing-target cancels. They're surfaced here so consumers using
 // the decorated-promise `requestId` can pattern-match on rejected
 // cancel paths. All three classes round-trip the RPC boundary via
@@ -181,10 +194,20 @@ export { SUPPORTED_AUDIO_FORMATS } from "./constants/audio";
 export { InferenceCancelledError } from "./utils/errors-server";
 export type { InferenceCancelledPartial } from "./utils/errors-server";
 export {
+  ContextOverflowError,
   RequestIdConflictError,
   RequestNotFoundError,
   RequestRejectedByPolicyError,
 } from "./utils/errors-server";
+
+// `WorkerCrashedError` and `WorkerShutdownError` are thrown by the
+// rpc-client life-signal race when the bare worker exits unexpectedly
+// or close()/process-exit teardown runs while a caller is in flight.
+// Exported so consumers can pattern-match with `instanceof`.
+export {
+  WorkerCrashedError,
+  WorkerShutdownError,
+} from "./utils/errors-client";
 
 // Logging exports
 export { getLogger, SDK_LOG_ID } from "./logging";

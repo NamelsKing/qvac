@@ -19,6 +19,9 @@
 #include <common/log.h>
 #include <inference-addon-cpp/Errors.hpp>
 #include <llama.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <llama/mtmd/mtmd.h>
 #include <picojson/picojson.h>
 
@@ -207,6 +210,46 @@ void LlamaModel::tuneConfigMap(
           "[LlamaModel] Finetuning: GPU lacks F16 out_prod, using f32 V for KV "
           "cache\n");
     }
+  }
+
+  // TurboQuant / PolarQuant KV-cache types (tbq3_0 / tbq4_0 / pq3_0 / pq4_0,
+  // ship Vulkan + CPU implementations only. On the OpenCL backend
+  // the kernels don't exist; on Metal the standalone MUL_MAT pipelines are
+  // explicitly disabled. Silently letting the user proceed lets llama.cpp
+  // commit KV-cache tensors to a backend that can't run the ops on them,
+  // which then aborts in ggml_backend_sched_split_graph at model load.
+  // Surface a clean error here instead.
+#if defined(__APPLE__)
+  constexpr bool kIsMetal = true;
+#else
+  constexpr bool kIsMetal = false;
+#endif
+  if (isOpenCl || kIsMetal) {
+    auto isTurboQuantKvType = [](const std::string& v) {
+      return v == "tbq3_0" || v == "tbq4_0" ||
+             v == "pq3_0"  || v == "pq4_0";
+    };
+    auto checkCacheType = [&](const char* hyphenKey, const char* underscoreKey,
+                              const char* side) {
+      auto it = configFilemap.find(hyphenKey);
+      if (it == configFilemap.end()) it = configFilemap.find(underscoreKey);
+      if (it == configFilemap.end()) return;
+      if (!isTurboQuantKvType(it->second)) return;
+      const char* backendName = isOpenCl ? "OpenCL" : "Metal";
+      throw qvac_errors::StatusError(
+          qvac_errors::general_error::InvalidArgument,
+          string_format(
+              "[LlamaModel] cache-type-%s=%s is a TurboQuant/PolarQuant type "
+              "and is not supported on the %s backend (Vulkan and CPU only). "
+              "Either pick a different cache type (f32/f16/bf16/q4_0/q4_1/"
+              "q5_0/q5_1/q8_0/iq4_nl) or switch device to a Vulkan GPU or "
+              "CPU.\n",
+              side,
+              it->second.c_str(),
+              backendName));
+    };
+    checkCacheType("cache-type-k", "cache_type_k", "k");
+    checkCacheType("cache-type-v", "cache_type_v", "v");
   }
 }
 
@@ -851,6 +894,20 @@ void LlamaModel::commonParamsParse(
     }
     configFilemap.erase(it);
   }
+
+#if defined(__ANDROID__) ||                                                    \
+    (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS)
+  if (splitMode != LLAMA_SPLIT_MODE_NONE ||
+      configFilemap.count("main-gpu") > 0 ||
+      configFilemap.count("main_gpu") > 0 ||
+      configFilemap.count("tensor-split") > 0 ||
+      configFilemap.count("tensor_split") > 0) {
+    throw qvac_errors::StatusError(
+        qvac_errors::general_error::InvalidArgument,
+        "Multi-GPU parameters (split-mode, main-gpu, tensor-split) are not "
+        "supported on mobile (single-GPU device).");
+  }
+#endif
 
   auto deviceIt = configFilemap.find("device");
   if (deviceIt == configFilemap.end()) {

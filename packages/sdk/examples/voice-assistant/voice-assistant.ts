@@ -19,13 +19,7 @@ import {
   WHISPER_TINY,
   VAD_SILERO_5_1_2,
   LLAMA_3_2_1B_INST_Q4_0,
-  TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE,
-  TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE,
+  TTS_EN_SUPERTONIC_Q8_0,
 } from "@qvac/sdk";
 import { spawnSync } from "child_process";
 import { startMicrophone } from "../audio/mic-input";
@@ -101,7 +95,6 @@ for (const tool of ["ffmpeg", "ffplay"]) {
 console.log("Loading whisper-tiny + Silero VAD...");
 const asrModelId = await loadModel({
   modelSrc: WHISPER_TINY,
-  modelType: "whisper",
   modelConfig: {
     vadModelSrc: VAD_SILERO_5_1_2,
     audio_format: "f32le",
@@ -119,7 +112,6 @@ const asrModelId = await loadModel({
 console.log("Loading Llama 3.2 1B...");
 const llmModelId = await loadModel({
   modelSrc: LLAMA_3_2_1B_INST_Q4_0,
-  modelType: "llm",
   modelConfig: {
     ctx_size: 4096,
   },
@@ -127,24 +119,13 @@ const llmModelId = await loadModel({
 
 console.log("Loading Supertonic TTS...");
 const ttsModelId = await loadModel({
-  modelSrc: TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32.src,
-  modelType: "tts",
+  modelSrc: TTS_EN_SUPERTONIC_Q8_0,
   modelConfig: {
     ttsEngine: "supertonic",
     language: "en",
+    voice: "F1",
     ttsSpeed: 1.05,
     ttsNumInferenceSteps: 5,
-    ttsSupertonicMultilingual: false,
-    ttsTextEncoderSrc: TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32.src,
-    ttsDurationPredictorSrc:
-      TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32.src,
-    ttsVectorEstimatorSrc:
-      TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32.src,
-    ttsVocoderSrc: TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32.src,
-    ttsUnicodeIndexerSrc:
-      TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32.src,
-    ttsTtsConfigSrc: TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE.src,
-    ttsVoiceStyleSrc: TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE.src,
   },
 });
 

@@ -8,13 +8,15 @@ constexpr const char* ADDON_ID = "GTE";
 
 enum GteErrorCode : std::uint8_t {
   UnableToLoadModel,
+  UnableToLoadMetadata,
   InvalidConfiguration,
   UnsupportedEmbeddings,
   InputTokensExceedBatchSize,
   ContextOverflow,
   InvalidArgument,
   FailedToGetTokenEmbeddings,
-  FailedToGetSequenceEmbeddings
+  FailedToGetSequenceEmbeddings,
+  DecodeFailed
 };
 
 inline std::string toString(GteErrorCode code)
@@ -22,6 +24,8 @@ inline std::string toString(GteErrorCode code)
   switch(code)
   {
     case UnableToLoadModel : return "UnableToLoadModel";
+    case UnableToLoadMetadata:
+      return "UnableToLoadMetadata";
     case InvalidConfiguration : return "InvalidConfiguration";
     case UnsupportedEmbeddings : return "UnsupportedEmbeddings";
     case InputTokensExceedBatchSize : return "InputTokensExceedBatchSize";
@@ -33,6 +37,8 @@ inline std::string toString(GteErrorCode code)
       return "FailedToGetTokenEmbeddings";
     case FailedToGetSequenceEmbeddings:
       return "FailedToGetSequenceEmbeddings";
+    case DecodeFailed:
+      return "DecodeFailed";
     default: return "UnknownError";
   }
 }

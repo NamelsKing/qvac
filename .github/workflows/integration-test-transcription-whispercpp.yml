@@ -63,6 +63,7 @@ jobs:
 
     env:
       GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+      NO_GPU: ${{ matrix.no_gpu || 'false' }}
 
     permissions:
       contents: read
@@ -87,6 +88,7 @@ jobs:
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
+            no_gpu: 'true'
             benchmark_matrix_json: >-
               [{"modelFile":"ggml-tiny.bin","useGPU":false,"backendHint":"cpu"}]
           - os: macos-14-xlarge
@@ -114,7 +116,8 @@ jobs:
       - name: Manual Workspace Cleanup
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
         shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
+        working-directory: .
+        if: runner.environment != 'github-hosted'
 
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -135,8 +138,31 @@ jobs:
         if: ${{ !inputs.prebuild_package }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
         with:
-          path: ${{ inputs.workdir }}/prebuilds
+          path: ${{ runner.temp }}/prebuilds-staging
           merge-multiple: true
+
+      - name: Move prebuilds from staging to workspace (Unix)
+        if: ${{ !inputs.prebuild_package && matrix.platform != 'win32' }}
+        shell: bash
+        run: |
+          mkdir -p ${{ inputs.workdir }}/prebuilds
+          cp -r ${{ runner.temp }}/prebuilds-staging/* ${{ inputs.workdir }}/prebuilds/
+          echo "Prebuilds moved from staging area"
+          ls -la ${{ inputs.workdir }}/prebuilds/
+
+      # Windows path: bash cp -r mangles `${{ runner.temp }}` (= "C:\a\_temp")
+      # because Git Bash interprets `\a`/`\_` as escape sequences, so the
+      # source path becomes invalid and the copy silently no-ops. Use
+      # PowerShell Copy-Item with native Windows paths.
+      - name: Move prebuilds from staging to workspace (Windows)
+        if: ${{ !inputs.prebuild_package && matrix.platform == 'win32' }}
+        shell: powershell
+        run: |
+          $dst = "${{ inputs.workdir }}/prebuilds"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse -Force "${{ runner.temp }}\prebuilds-staging\*" $dst
+          Write-Host "Prebuilds moved from staging area"
+          Get-ChildItem -Recurse $dst | Select-Object FullName | Format-Table -AutoSize
 
       - name: Download prebuilds from package (Unix)
         if: ${{ inputs.prebuild_package && matrix.platform != 'win32' }}
@@ -202,6 +228,15 @@ jobs:
         name: Set Vulkan SDK Path on Windows Server 2025
         run: echo "VULKAN_SDK=C:\VulkanSDK" >> $Env:GITHUB_ENV
 
+      - name: Cache integration test models
+        id: model-cache
+        if: runner.environment != 'github-hosted'
+        uses: ./.github/actions/cache-models
+        with:
+          package: transcription-whispercpp
+          paths: packages/transcription-whispercpp/models
+          hash-files-glob: packages/transcription-whispercpp/test/integration/helpers.js
+
       - name: Run integration test (Unix)
         if: ${{ matrix.platform != 'win32' && inputs.run_integration_tests != false }}
         working-directory: ${{ inputs.workdir }}
@@ -218,6 +253,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
+      - name: Run integration GPU test (Unix)
+        if: ${{ matrix.platform != 'win32' && inputs.run_integration_tests != false }}
+        working-directory: ${{ inputs.workdir }}
+        shell: bash
+        run: npm run test:integration:gpu
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Run integration GPU test (Windows)
+        if: ${{ matrix.platform == 'win32' && inputs.run_integration_tests != false }}
+        working-directory: ${{ inputs.workdir }}
+        shell: powershell
+        run: npm run test:integration:gpu
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+
       - name: Run Vulkan GPU smoke test
         if: matrix.runner == 'qvac-ubuntu2404-x64-gpu'
         working-directory: ${{ inputs.workdir }}
@@ -227,7 +278,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           
       - name: Run RTF benchmark (Unix)
-        if: ${{ always() && matrix.platform != 'win32' && inputs.run_rtf_benchmarks != false }}
+        if: ${{ always() && !cancelled() && matrix.platform != 'win32' && inputs.run_rtf_benchmarks != false }}
         continue-on-error: true
         working-directory: ${{ inputs.workdir }}
         shell: bash
@@ -239,7 +290,7 @@ jobs:
           QVAC_WHISPER_BENCHMARK_MATRIX_JSON: ${{ inputs.benchmark_matrix_json || matrix.benchmark_matrix_json }}
 
       - name: Run RTF benchmark (Windows)
-        if: ${{ always() && matrix.platform == 'win32' && inputs.run_rtf_benchmarks != false }}
+        if: ${{ always() && !cancelled() && matrix.platform == 'win32' && inputs.run_rtf_benchmarks != false }}
         continue-on-error: true
         working-directory: ${{ inputs.workdir }}
         shell: powershell
@@ -251,7 +302,7 @@ jobs:
           QVAC_WHISPER_BENCHMARK_MATRIX_JSON: ${{ inputs.benchmark_matrix_json || matrix.benchmark_matrix_json }}
 
       - name: Upload RTF results
-        if: ${{ always() && inputs.run_rtf_benchmarks != false }}
+        if: ${{ always() && !cancelled() && inputs.run_rtf_benchmarks != false }}
         continue-on-error: true
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
@@ -261,7 +312,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Add RTF summary
-        if: ${{ always() && inputs.run_rtf_benchmarks != false }}
+        if: ${{ always() && !cancelled() && inputs.run_rtf_benchmarks != false }}
         continue-on-error: true
         working-directory: ${{ inputs.workdir }}
         shell: bash

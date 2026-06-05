@@ -21,7 +21,7 @@ on:
         required: false
         default: ""
       qvac_perf_only:
-        description: "If true, run only the perf-emitting tests (image-elephant, image-fruit-plate, image-high-res-aurora, bitnet, tool-calling)."
+        description: "If true, run only the perf-emitting tests (image-*, bitnet, tool-calling, gemma4-image-*-perf, qwen3-5-image-*-perf)."
         type: boolean
         required: false
         default: false
@@ -74,7 +74,7 @@ jobs:
         # QVAC-17830: `label` disambiguates matrix entries that share
         # the same `<platform>-<arch>` tuple so every entry produces a
         # uniquely-named perf-report artifact. Without this, the two
-        # `linux-x64` entries (CPU-only vs GPU runner) and the two
+        # `linux-x64` entries (ubuntu 22 vs 24 GPU runners) and the two
         # `linux-arm64` entries (ubuntu 22 vs 24) collided on upload
         # and `actions/download-artifact` silently dropped one of each,
         # hiding GPU data in the combined report.
@@ -82,15 +82,14 @@ jobs:
           - os: ubuntu-22.04
             platform: linux
             arch: x64
-            runner: qvac-ubuntu2204-x64
-            no_gpu: 'true'
-            label: linux-x64-cpu
+            runner: qvac-ubuntu2204-x64-gpu
+            label: linux-x64-u22-gpu
           - os: ubuntu-24.04
             platform: linux
             arch: x64
             runner: qvac-ubuntu2404-x64-gpu
             timeout_minutes: 480
-            label: linux-x64-gpu
+            label: linux-x64-u24-gpu
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
@@ -135,7 +134,8 @@ jobs:
       - name: Manual Workspace Cleanup
         run: rm -rf "$GITHUB_WORKSPACE" && mkdir -p "$GITHUB_WORKSPACE"
         shell: bash
-        if: startsWith(matrix.runner, 'qvac-')
+        working-directory: .
+        if: runner.environment != 'github-hosted'
 
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
@@ -143,6 +143,13 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref || github.ref }}
           token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Cache integration test models
+        id: model-cache
+        if: runner.environment != 'github-hosted'
+        uses: ./.github/actions/cache-models
+        with:
+          package: llm-llamacpp
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # 6.0.0
@@ -162,8 +169,31 @@ jobs:
         if: ${{ !inputs.prebuild_package }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
         with:
-          path: ${{ env.WORKDIR }}/prebuilds
+          path: ${{ runner.temp }}/prebuilds-staging
           merge-multiple: true
+
+      - name: Move prebuilds from staging to workspace (Unix)
+        if: ${{ !inputs.prebuild_package && matrix.platform != 'win32' }}
+        shell: bash
+        run: |
+          mkdir -p ${{ env.WORKDIR }}/prebuilds
+          cp -r ${{ runner.temp }}/prebuilds-staging/* ${{ env.WORKDIR }}/prebuilds/
+          echo "Prebuilds moved from staging area"
+          ls -la ${{ env.WORKDIR }}/prebuilds/
+
+      # Windows path: bash cp -r mangles `${{ runner.temp }}` (= "C:\a\_temp")
+      # because Git Bash interprets `\a`/`\_` as escape sequences, so the
+      # source path becomes invalid and the copy silently no-ops. Use
+      # PowerShell Copy-Item with native Windows paths.
+      - name: Move prebuilds from staging to workspace (Windows)
+        if: ${{ !inputs.prebuild_package && matrix.platform == 'win32' }}
+        shell: powershell
+        run: |
+          $dst = "${{ env.WORKDIR }}/prebuilds"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse -Force "${{ runner.temp }}\prebuilds-staging\*" $dst
+          Write-Host "Prebuilds moved from staging area"
+          Get-ChildItem -Recurse $dst | Select-Object FullName | Format-Table -AutoSize
 
       - name: Download prebuilds from package (Linux/macOS)
         if: ${{ inputs.prebuild_package && matrix.platform != 'win32' }}
@@ -248,7 +278,13 @@ jobs:
               test/integration/tool-calling.test.js \
               test/integration/image-elephant.test.js \
               test/integration/image-fruit-plate.test.js \
-              test/integration/image-high-res-aurora.test.js
+              test/integration/image-high-res-aurora.test.js \
+              test/integration/gemma4-image-elephant-perf.test.js \
+              test/integration/gemma4-image-fruit-plate-perf.test.js \
+              test/integration/gemma4-image-high-res-aurora-perf.test.js \
+              test/integration/qwen3-5-image-elephant-perf.test.js \
+              test/integration/qwen3-5-image-fruit-plate-perf.test.js \
+              test/integration/qwen3-5-image-high-res-aurora-perf.test.js
             bare test/integration/all.js --exit 2>&1 | tee test-output.log
             exit ${PIPESTATUS[0]}
           fi
@@ -271,7 +307,13 @@ jobs:
               test/integration/tool-calling.test.js `
               test/integration/image-elephant.test.js `
               test/integration/image-fruit-plate.test.js `
-              test/integration/image-high-res-aurora.test.js
+              test/integration/image-high-res-aurora.test.js `
+              test/integration/gemma4-image-elephant-perf.test.js `
+              test/integration/gemma4-image-fruit-plate-perf.test.js `
+              test/integration/gemma4-image-high-res-aurora-perf.test.js `
+              test/integration/qwen3-5-image-elephant-perf.test.js `
+              test/integration/qwen3-5-image-fruit-plate-perf.test.js `
+              test/integration/qwen3-5-image-high-res-aurora-perf.test.js
           } else {
             npm run test:integration:generate
           }
@@ -283,7 +325,7 @@ jobs:
           QVAC_PERF_WARMUP_RUNS: ${{ inputs.qvac_perf_warmup_runs }}
 
       - name: Generate HTML performance report
-        if: ${{ always() }}
+        if: ${{ always() && !cancelled() }}
         working-directory: ${{ env.WORKDIR }}
         shell: bash
         run: |
@@ -299,7 +341,7 @@ jobs:
           fi
 
       - name: Upload performance report
-        if: ${{ always() }}
+        if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # 7.0.0
         with:
           name: perf-report-llamacpp-llm-${{ matrix.label }}-${{ github.run_number }}

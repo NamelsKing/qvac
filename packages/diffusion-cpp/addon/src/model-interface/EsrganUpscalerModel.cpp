@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <memory>
-#include <stdexcept>
 #include <utility>
 
 #include <inference-addon-cpp/Errors.hpp>
@@ -10,6 +9,7 @@
 #include "utils/BackendLoader.hpp"
 #include "utils/ImageCodec.hpp"
 #include "utils/LoggingMacros.hpp"
+#include "utils/SdErrors.hpp"
 
 using namespace qvac_lib_inference_addon_cpp;
 using namespace qvac_errors;
@@ -18,7 +18,7 @@ namespace {
 
 void throwIfCancelled(const std::atomic<bool>& cancelRequested) {
   if (cancelRequested.load()) {
-    throw std::runtime_error("Job cancelled");
+    throw qvac_lib_inference_addon_sd::errors::makeCancelledError();
   }
 }
 
@@ -131,6 +131,11 @@ std::any EsrganUpscalerModel::process(const std::any& input) {
   lastStats_.emplace_back("width", statsWidth);
   lastStats_.emplace_back("height", statsHeight);
   lastStats_.emplace_back("repeats", static_cast<int64_t>(job.repeats));
+  const int backendDevice = upscaler_.actualBackendDevice();
+  if (backendDevice >= 0) {
+    lastStats_.emplace_back(
+        "backendDevice", static_cast<int64_t>(backendDevice));
+  }
 
   return std::any{};
 }

@@ -19,7 +19,8 @@ const platform = os.platform()
 
 const isDarwinX64 = platform === 'darwin' && os.arch() === 'x64'
 const isLinuxArm64 = platform === 'linux' && os.arch() === 'arm64'
-const isMobile = platform === 'ios' || platform === 'android'
+const isIos = platform === 'ios'
+const isMobile = isIos || platform === 'android'
 
 // Test constants
 const TEST_TIMEOUT = 600_000
@@ -52,7 +53,13 @@ function cosineSimilarity (a, b) {
 
 const DEFAULT_BATCH_SIZE = '1024'
 const DEVICES = (isDarwinX64 || isLinuxArm64) ? ['cpu'] : ['cpu', 'gpu'] // Devices to test on
-const STRESS_BATCH_SIZE = '4096'
+// iOS apps are capped at ~3.3 GB per-process by jetsam, and KV+scratch
+// buffers for a 4096-token batch push the test over that limit, so the OS
+// kills the process before the addon can surface "Failed to get sequence
+// embeddings". Halving the batch keeps the stress-test intent without tripping
+// the OOM killer.
+const STRESS_BATCH_SIZE = isIos ? '2048' : '4096'
+const STRESS_LARGE_BATCH_QUERY_LENGTH = isIos ? 16 : 60
 const STRESS_NUM_SEQUENCES = isMobile ? 32 : 256
 
 /**
@@ -141,8 +148,8 @@ createDeviceModelTest('Model inference works correctly with long string exceedin
   const repeatCount = Math.ceil((maxContextSize / 2) + 50) // Ensure we exceed the limit
   const longString = 'Hello world '.repeat(repeatCount)
 
-  // Verify that an error is thrown when input exceeds model training context size
-  // Expected error: "tokenizeInput: number of tokens in prompt 0 (XXX) exceeds model training context size (XXX)"
+  // Verify that an error is thrown when input exceeds the effective context size
+  // Expected error: "tokenizeInput: number of tokens in prompt 0 (XXX) exceeds effective context size (XXX)"
   let response = null
   let caughtError = null
 
@@ -177,7 +184,7 @@ createDeviceModelTest('Model inference works correctly with long string exceedin
 
   // Verify the error message matches expected format
   t.ok(errorMessage.includes('tokenizeInput'), 'Error should mention tokenizeInput')
-  t.ok(errorMessage.includes('exceeds model training context size'), 'Error should mention exceeding context size')
+  t.ok(errorMessage.includes('exceeds effective context size'), 'Error should mention exceeding context size')
   // Verify the error contains token count information
   t.ok(errorMessage.includes(String(maxContextSize)), `Error should mention context size limit (${maxContextSize})`)
   t.ok(/\d+/.test(errorMessage), 'Error should include token count')
@@ -207,9 +214,9 @@ createDeviceModelTest('Model inference works correctly with array input where on
     'This is a short third sequence'
   ]
 
-  // Verify that an error is thrown when one sequence exceeds model training context size
+  // Verify that an error is thrown when one sequence exceeds effective context size
   // Expected error: "encodeHostF32Sequences: number of tokens in sequence 1 (XXX)
-  // exceeds model training context size (XXX)"
+  // exceeds effective context size (XXX)"
   let response = null
   let caughtError = null
 
@@ -244,7 +251,7 @@ createDeviceModelTest('Model inference works correctly with array input where on
   const hasEncodeError = errorMessage.includes('encodeHostF32Sequences')
   const hasTokenizeError = errorMessage.includes('tokenizeInput')
   t.ok(hasEncodeError || hasTokenizeError, 'Error should mention encodeHostF32Sequences or tokenizeInput')
-  t.ok(errorMessage.includes('exceeds model training context size'), 'Error should mention exceeding context size')
+  t.ok(errorMessage.includes('exceeds effective context size'), 'Error should mention exceeding context size')
   t.ok(errorMessage.includes(String(maxContextSize)), `Error should mention context size limit (${maxContextSize})`)
   t.ok(/\d+/.test(errorMessage), 'Error should include token count')
   // Verify the error mentions which sequence is failing (sequence 1)
@@ -449,7 +456,7 @@ createDeviceModelTest(`Stress: inference with large batch size ${STRESS_BATCH_SI
   )
 
   const sentence = 'This is a stress test sentence for large batch size configuration.'.repeat(5)
-  const query = Array(60).fill(sentence)
+  const query = Array(STRESS_LARGE_BATCH_QUERY_LENGTH).fill(sentence)
 
   try {
     const response = await inference.run(query)

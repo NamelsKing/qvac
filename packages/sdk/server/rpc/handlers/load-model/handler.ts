@@ -69,7 +69,7 @@ export async function handleLoadModel(
   // is opened with `modelId: undefined` so a cancel-by-modelId fired
   // before the load completes is a clean no-op (rather than matching a
   // half-built entry). Cancel-by-`requestId` works from `begin(...)` on.
-  await using ctx = getRequestRegistry().begin({
+  await using ctx = await getRequestRegistry().begin({
     requestId,
     kind: "loadModel",
   });
@@ -169,7 +169,10 @@ export async function handleLoadModel(
       );
     }
 
-    if (!resolvedModelPath) {
+    // An empty resolved path is legitimate when the plugin opts out of
+    // primary-model-path validation (bundled weights). For every other
+    // plugin, an empty path means resolution failed and we must abort.
+    if (!resolvedModelPath && !plugin.skipPrimaryModelPathValidation) {
       throw new ModelLoadFailedError("modelPath resolution failed");
     }
 

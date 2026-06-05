@@ -16,6 +16,8 @@ See [https://docs.qvac.tether.io/sdk/getting-started](https://docs.qvac.tether.i
 
 For AI/LLM tools, use [https://docs.qvac.tether.io/llms-full.txt](https://docs.qvac.tether.io/llms-full.txt) as the consolidated plaintext documentation export.
 
+> **Assembling a custom worker on Bare?** See [`@qvac/bare-sdk`](../bare-sdk/README.md) — the same SDK surface with no built-in plugin addons, designed for consumers wiring their own worker entry (Pear apps, bare-expo apps, direct Bare scripts).
+
 ## Supported environments and installation
 
 See https://docs.qvac.tether.io/sdk/getting-started/installation
@@ -114,6 +116,18 @@ This outputs a tarball under `dist/sdk-{version}.tgz` that you can install in yo
 ```bash
 npm i path/to/sdk-0.3.0.tgz
 ```
+
+## Testing
+
+The SDK test suite is organized into three buckets by runtime:
+
+| Bucket | Runtime | Location | Command |
+|--------|---------|----------|---------|
+| Unit | Bun / Node | `test/unit/` | `bun run test:unit` |
+| Server (Bare) | Bare | `test/bare/` | `bun run test:bare` |
+| Client (consumer) | Node / RN | `e2e/` | See [`e2e/README.md`](./e2e/README.md) |
+
+See [`TESTING.md`](./TESTING.md) for the full decision tree on where new tests should land.
 
 ## Contributing
 

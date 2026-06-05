@@ -10,6 +10,7 @@
     "imageAurora": ["runImageHighResAuroraTest"],
     "gemma": ["runGemma4Test"],
     "ocrPaddle": ["runOcrPaddleTest"],
+    "quantizedKvcache": ["runQuantizedKvcacheTest"],
     "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
@@ -24,7 +25,18 @@
       "runMultiGpuTest",
       "runMultiInstanceTest",
       "runQwen35Test",
+      "runTurboquantTest",
       "runUtf8OutputTest"
+    ],
+    "vlmPerfGemma4": [
+      "runGemma4ImageElephantPerfTest",
+      "runGemma4ImageFruitPlatePerfTest",
+      "runGemma4ImageHighResAuroraPerfTest"
+    ],
+    "vlmPerfQwen35": [
+      "runQwen35ImageElephantPerfTest",
+      "runQwen35ImageFruitPlatePerfTest",
+      "runQwen35ImageHighResAuroraPerfTest"
     ]
   },
   "android": {
@@ -48,11 +60,21 @@
     "imagePerf-fruitPlate": [
       "runImageFruitPlateTest"
     ],
+    "vlmPerfGemma4": [
+      "runGemma4ImageElephantPerfTest",
+      "runGemma4ImageFruitPlatePerfTest",
+      "runGemma4ImageHighResAuroraPerfTest"
+    ],
+    "vlmPerfQwen35": [
+      "runQwen35ImageElephantPerfTest",
+      "runQwen35ImageFruitPlatePerfTest",
+      "runQwen35ImageHighResAuroraPerfTest"
+    ],
     "lightA": [
       "runApiBehaviorTest",
       "runBitnetTest",
-      "runCacheStateMachineTest",
       "runConfigParametersTest",
+      "runQuantizedKvcacheTest",
       "runToolsCompactTest"
     ],
     "lightB": [
@@ -62,7 +84,11 @@
       "runMultiGpuTest",
       "runMultiInstanceTest",
       "runQwen35Test",
+      "runTurboquantTest",
       "runUtf8OutputTest"
+    ],
+    "groupB": [
+      "runCacheStateMachineTest"
     ]
   }
 }

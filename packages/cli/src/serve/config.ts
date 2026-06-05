@@ -1,5 +1,7 @@
-import { getSDK } from './core/sdk.js'
+import type { ModelConstant } from '@qvac/sdk'
 import type { ServeConfig, ResolvedModelEntry } from './core/model-registry.js'
+import { SDCPP_VIDEO_TYPE, resolveSdcppVideoAlias } from './aliases/sdcpp-video.js'
+import { loadModelConstants } from './sdk-constants.js'
 
 const ENDPOINT_CATEGORY: Record<string, string> = {
   llm: 'chat',
@@ -15,6 +17,7 @@ const ENDPOINT_CATEGORY: Record<string, string> = {
   nmt: 'translation',
   'nmtcpp-translation': 'translation',
   tts: 'speech',
+  'tts-ggml': 'speech',
   'onnx-tts': 'speech',
   ocr: 'ocr',
   'onnx-ocr': 'ocr',
@@ -63,25 +66,18 @@ interface CLIServeOptions {
   publicBaseUrl?: string | undefined
 }
 
-interface SDKModelConstant {
-  src: string
-  addon: string
-  name: string
-}
-
-export async function parseServeConfig (rawConfig: RawServeConfig, cliOptions: CLIServeOptions): Promise<ServeConfig> {
+export function parseServeConfig (rawConfig: RawServeConfig, cliOptions: CLIServeOptions): ServeConfig {
   const serve = rawConfig.serve ?? {}
   const rawModels = serve.models ?? {}
 
   const models = new Map<string, ResolvedModelEntry>()
-  const registry = await loadModelConstants()
 
   for (const [alias, entry] of Object.entries(rawModels)) {
     let resolved: ResolvedModelEntry
     if (typeof entry === 'string') {
-      resolved = resolveModelConstant(alias, entry, registry)
+      resolved = resolveModelConstant(alias, { model: entry })
     } else if (isConstantModelEntry(entry)) {
-      resolved = resolveModelConstant(alias, entry.model, registry, entry)
+      resolved = resolveModelConstant(alias, entry)
     } else {
       resolved = parseExplicitEntry(alias, entry as ExplicitModelEntry)
     }
@@ -190,11 +186,18 @@ const VIRTUAL_SDK_WHISPER_AUDIO_TRANSLATION = 'whispercpp-audio-translation'
  * (whisper modelConfig is flat whisper fields, not a nested whisperConfig object).
  * Exported for unit tests.
  */
-export function resolveExplicitServeModel (type: string, config: Record<string, unknown>): {
+export function resolveExplicitServeModel (
+  type: string,
+  config: Record<string, unknown>
+): {
   sdkType: string
   endpointCategory: string
   config: Record<string, unknown>
 } {
+  if (type === SDCPP_VIDEO_TYPE) {
+    return resolveSdcppVideoAlias(config)
+  }
+
   if (type !== VIRTUAL_SDK_WHISPER_AUDIO_TRANSLATION) {
     return {
       sdkType: type,
@@ -235,18 +238,18 @@ function isConstantModelEntry (entry: unknown): entry is ConstantModelEntry {
   )
 }
 
-export function resolveModelConstant (alias: string, constantName: string, registry: Map<string, SDKModelConstant>, overrides?: ConstantModelEntry): ResolvedModelEntry {
-  const model = registry.get(constantName)
+export function resolveModelConstant (alias: string, entry: ConstantModelEntry): ResolvedModelEntry {
+  const model = loadModelConstants().get(entry.model)
   if (!model) {
     throw new Error(
-      `serve.models.${alias}: unknown model constant "${constantName}". ` +
+      `serve.models.${alias}: unknown model constant "${entry.model}". ` +
       'Use a valid SDK model name (e.g. QWEN3_600M_INST_Q4).'
     )
   }
 
-  const rawConfig = overrides?.config ?? {}
-  const resolved = overrides?.type
-    ? resolveExplicitServeModel(overrides.type, rawConfig)
+  const rawConfig = entry.config ?? {}
+  const resolved = entry.type
+    ? resolveExplicitServeModel(entry.type, rawConfig)
     : {
         sdkType: model.addon,
         endpointCategory: normalizeEndpointCategory(model.addon),
@@ -255,16 +258,19 @@ export function resolveModelConstant (alias: string, constantName: string, regis
 
   return {
     alias,
-    src: model.src,
+    modelSrc: model,
     sdkType: resolved.sdkType,
     endpointCategory: resolved.endpointCategory,
-    isDefault: overrides?.default === true,
-    preload: overrides?.preload !== false,
+    isDefault: entry.default === true,
+    preload: entry.preload !== false,
     config: resolved.config
   }
 }
 
-function parseExplicitEntry (alias: string, entry: ExplicitModelEntry): ResolvedModelEntry {
+function parseExplicitEntry (
+  alias: string,
+  entry: ExplicitModelEntry
+): ResolvedModelEntry {
   if (!entry.src) {
     throw new Error(`serve.models.${alias}: "src" is required`)
   }
@@ -275,9 +281,15 @@ function parseExplicitEntry (alias: string, entry: ExplicitModelEntry): Resolved
   const rawConfig = entry.config ?? {}
   const resolved = resolveExplicitServeModel(entry.type, rawConfig)
 
+  // Allow `entry.src` to be either a path or a known SDK model-constant name.
+  // Constant names look like `WAN2_1_T2V_1_3B_FP16`; paths contain `/` or
+  // start with `.`. If the string is a registered constant, swap in the
+  // ModelConstant object so the P2P registry resolves it.
+  const modelSrc: string | ModelConstant = loadModelConstants().get(entry.src) ?? entry.src
+
   return {
     alias,
-    src: entry.src,
+    modelSrc,
     sdkType: resolved.sdkType,
     endpointCategory: resolved.endpointCategory,
     isDefault: entry.default === true,
@@ -305,36 +317,12 @@ export function resolveModelAlias (serveConfig: ServeConfig, modelName: string |
   if (entry) return entry
 
   for (const [, e] of serveConfig.models) {
-    if (e.src === modelName) return e
+    if (srcOf(e.modelSrc) === modelName) return e
   }
 
   return null
 }
 
-async function loadModelConstants (): Promise<Map<string, SDKModelConstant>> {
-  const map = new Map<string, SDKModelConstant>()
-
-  try {
-    const sdk = await getSDK()
-    for (const [key, value] of Object.entries(sdk)) {
-      if (isSDKModelConstant(value)) {
-        map.set(key, value)
-        map.set(value.name, value)
-      }
-    }
-  } catch {
-    // SDK not available — only explicit entries will work
-  }
-
-  return map
-}
-
-function isSDKModelConstant (value: unknown): value is SDKModelConstant {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    'src' in value &&
-    'addon' in value &&
-    'name' in value
-  )
+function srcOf (modelSrc: string | ModelConstant): string {
+  return typeof modelSrc === 'string' ? modelSrc : modelSrc.src
 }

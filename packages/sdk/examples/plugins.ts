@@ -11,7 +11,7 @@
  *
  */
 
-import { execSync } from "child_process";
+import { bundleSdk } from "@/commands";
 import { existsSync, rmSync } from "fs";
 import path from "path";
 
@@ -32,15 +32,9 @@ console.log(
 console.log("🔨 Generating worker bundle from plugins config...\n");
 
 try {
-  execSync(`npx @qvac/cli bundle sdk --config "${configPath}" --quiet`, {
-    cwd: projectRoot,
-    stdio: "inherit",
-  });
+  await bundleSdk({ projectRoot, configPath, quiet: true });
 } catch (error) {
-  console.error(
-    "❌ Failed to generate worker bundle. Ensure @qvac/cli is installed:",
-  );
-  console.error("   npm install -D @qvac/cli");
+  console.error("❌ Failed to generate worker bundle.");
   console.error("❌ Error:", error);
   process.exit(1);
 }
@@ -76,7 +70,6 @@ console.log("1. LLM Completion (llamacpp-completion plugin)");
 try {
   const llmModelId = await loadModel({
     modelSrc: LLAMA_3_2_1B_INST_Q4_0,
-    modelType: "llm",
     modelConfig: { ctx_size: 2048 },
     onProgress: (p) =>
       console.log(`   Loading LLM: ${p.percentage.toFixed(1)}%`),
@@ -111,7 +104,6 @@ console.log("2. Translation (nmtcpp-translation plugin)");
 try {
   const nmtModelId = await loadModel({
     modelSrc: BERGAMOT_EN_ES,
-    modelType: "nmt",
     modelConfig: {
       engine: "Bergamot",
       from: "en",
@@ -127,7 +119,7 @@ try {
   const result = translate({
     modelId: nmtModelId,
     text,
-    modelType: "nmt",
+    modelType: "nmtcpp-translation",
     stream: false,
   });
 
@@ -147,7 +139,6 @@ console.log("   Attempting to load an embeddings model...\n");
 try {
   const embedModelId = await loadModel({
     modelSrc: GTE_LARGE_FP16,
-    modelType: "embeddings",
   });
 
   await embed({ modelId: embedModelId, text: "test" });

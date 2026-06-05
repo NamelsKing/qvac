@@ -20,13 +20,7 @@ import {
   unloadModel,
   type ModelProgressUpdate,
   LLAMA_3_2_1B_INST_Q4_0,
-  TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32,
-  TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE,
-  TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE,
+  TTS_EN_SUPERTONIC_Q8_0,
 } from "@qvac/sdk";
 import { createWav, playPcmInt16Chunk } from "./utils";
 
@@ -78,8 +72,7 @@ function appendPcmSamples(target: number[], chunk: number[]) {
 try {
   console.log(`Loading LLM from registry: ${LLAMA_3_2_1B_INST_Q4_0.name}`);
   const llmModelId = await loadModel({
-    modelSrc: LLAMA_3_2_1B_INST_Q4_0.src,
-    modelType: "llm",
+    modelSrc: LLAMA_3_2_1B_INST_Q4_0,
     modelConfig: {
       ctx_size: 2048,
     },
@@ -90,30 +83,20 @@ try {
 
   console.log("Loading Supertonic TTS (registry)…");
   const ttsModelId = await loadModel({
-    modelSrc: TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32.src,
-    modelType: "tts",
+    modelSrc: TTS_EN_SUPERTONIC_Q8_0,
     modelConfig: {
       ttsEngine: "supertonic",
       language: "en",
+      voice: "F1",
       ttsSpeed: 1.05,
       ttsNumInferenceSteps: 10,
-      ttsSupertonicMultilingual: true,
-      ttsTextEncoderSrc: TTS_SUPERTONIC2_OFFICIAL_TEXT_ENCODER_SUPERTONE_FP32.src,
-      ttsDurationPredictorSrc:
-        TTS_SUPERTONIC2_OFFICIAL_DURATION_PREDICTOR_SUPERTONE_FP32.src,
-      ttsVectorEstimatorSrc: TTS_SUPERTONIC2_OFFICIAL_VECTOR_ESTIMATOR_SUPERTONE_FP32.src,
-      ttsVocoderSrc: TTS_SUPERTONIC2_OFFICIAL_VOCODER_SUPERTONE_FP32.src,
-      ttsUnicodeIndexerSrc: TTS_SUPERTONIC2_OFFICIAL_UNICODE_INDEXER_SUPERTONE_FP32.src,
-      ttsTtsConfigSrc: TTS_SUPERTONIC2_OFFICIAL_TTS_CONFIG_SUPERTONE.src,
-      ttsVoiceStyleSrc: TTS_SUPERTONIC2_OFFICIAL_VOICE_STYLE_SUPERTONE.src,
     },
     onProgress: (progress: ModelProgressUpdate) =>
       console.log(`TTS load: ${progress.percentage.toFixed(1)}%`),
   });
   console.log(`TTS ready: ${ttsModelId}`);
 
-  const prompt =
-    "What is a constellation?";
+  const prompt = "What is a constellation?";
 
   console.log(`\nUser: ${prompt}\nAssistant (streaming):`);
 

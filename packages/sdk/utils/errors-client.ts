@@ -175,6 +175,39 @@ export class RPCInitTimeoutError extends QvacErrorBase {
   }
 }
 
+export class WorkerCrashedError extends QvacErrorBase {
+  public readonly exitCode: number | null;
+  public readonly exitSignal: NodeJS.Signals | null;
+
+  constructor(
+    exitCode: number | null,
+    exitSignal: NodeJS.Signals | null,
+    cause?: unknown,
+  ) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.WORKER_CRASHED,
+        [String(exitCode), String(exitSignal)],
+        cause,
+      ),
+    );
+    this.exitCode = exitCode;
+    this.exitSignal = exitSignal;
+  }
+}
+
+export class WorkerShutdownError extends QvacErrorBase {
+  constructor(cause?: unknown) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.WORKER_SHUTDOWN,
+        undefined,
+        cause,
+      ),
+    );
+  }
+}
+
 // ============== Provider/Delegation Errors ==============
 
 export class ProviderStartFailedError extends QvacErrorBase {
@@ -287,12 +320,78 @@ export class PearWorkerEntryRequiredError extends QvacErrorBase {
   }
 }
 
+export class WorkerPluginsNotRegisteredError extends QvacErrorBase {
+  constructor(cause?: unknown) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.WORKER_PLUGINS_NOT_REGISTERED,
+        [],
+        cause,
+      ),
+    );
+  }
+}
+
 export class BundleVerificationFailedError extends QvacErrorBase {
   constructor(bundlePath: string, cause?: unknown) {
     super(
       createErrorOptions(
         SDK_CLIENT_ERROR_CODES.BUNDLE_VERIFICATION_FAILED,
         [bundlePath],
+        cause,
+      ),
+    );
+  }
+}
+
+export class BarePackNotInstalledError extends QvacErrorBase {
+  constructor(cause?: unknown) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.BARE_PACK_NOT_INSTALLED,
+        undefined,
+        cause,
+      ),
+    );
+  }
+}
+
+export class BarePackError extends QvacErrorBase {
+  constructor(
+    exitCode: number,
+    entryPath: string,
+    outputPath: string,
+    cause?: unknown,
+  ) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.BARE_PACK_ERROR,
+        [exitCode, entryPath, outputPath],
+        cause,
+      ),
+    );
+  }
+}
+
+export class InvalidPluginSpecifierError extends QvacErrorBase {
+  constructor(specifiers: string[], cause?: unknown) {
+    const list = specifiers.map((s) => `  - ${s}`).join("\n");
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.INVALID_PLUGIN_SPECIFIER,
+        [list],
+        cause,
+      ),
+    );
+  }
+}
+
+export class BareImportsMapNotFoundError extends QvacErrorBase {
+  constructor(sdkName: string, expectedPath: string, cause?: unknown) {
+    super(
+      createErrorOptions(
+        SDK_CLIENT_ERROR_CODES.BARE_IMPORTS_MAP_NOT_FOUND,
+        [sdkName, expectedPath],
         cause,
       ),
     );
