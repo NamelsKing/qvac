@@ -220,6 +220,80 @@ runs:
         echo "Console logs extracted to $CONSOLE_DIR:"
         find "$CONSOLE_DIR" -type f -exec ls -lh {} \; 2>/dev/null || true
 
+    # QVAC-19368: consolidate the per-device *_test-results.json files into a
+    # single test-results-summary.json (one row per test case with its status
+    # + duration per device) so it's easy to see at a glance whether each case
+    # ran, passed, failed, or was skipped (e.g. the VLM aurora gate). The JSON
+    # ships inside the console-logs artifact; a compact table + artifact link
+    # go to the GitHub Step Summary.
+    - name: Build test-case results summary
+      id: results_summary
+      if: always() && inputs.run-arns != '[]' && inputs.run-arns != ''
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        ADDON_NAME: ${{ inputs.addon-npm-name }}
+      run: |
+        CONSOLE_DIR="console-logs/${PLATFORM}"
+        OUT_JSON="${CONSOLE_DIR}/test-results-summary.json"
+        if ! ls "$CONSOLE_DIR"/*_test-results.json >/dev/null 2>&1; then
+          echo "No per-device test-results.json found — skipping summary"
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        python3 - "$CONSOLE_DIR" "$OUT_JSON" "$PLATFORM" "$ADDON_NAME" <<'PY'
+        import sys, json, glob, os, re
+        console_dir, out_json, platform, addon = sys.argv[1:5]
+        rows = {}  # test title -> { device -> {status, durationMs} }
+        devices = set()
+        for f in sorted(glob.glob(os.path.join(console_dir, '*_test-results.json'))):
+            base = os.path.basename(f)[:-len('_test-results.json')]
+            # base looks like <Run>_<Device>; take the trailing device name.
+            device = re.sub(r'^.*?_(Apple|Google|Samsung)', r'\1', base).replace('_', ' ')
+            devices.add(device)
+            try:
+                d = json.load(open(f))
+            except Exception:
+                continue
+            for t in d.get('tests', []):
+                title = t.get('title', '?')
+                status = t.get('status', 'unknown')
+                dur = t.get('duration', 0) or 0
+                # A 0ms 'passed' test is a gate-skip (brittle skip:true), surface as 'skipped'.
+                if status == 'passed' and dur == 0:
+                    status = 'skipped'
+                rows.setdefault(title, {})[device] = {'status': status, 'durationMs': dur}
+        devices = sorted(devices)
+        summary = {
+            'addon': addon, 'platform': platform,
+            'devices': devices,
+            'tests': [
+                {'test': title, 'results': rows[title]} for title in sorted(rows)
+            ]
+        }
+        with open(out_json, 'w') as fh:
+            json.dump(summary, fh, indent=2)
+        print(f"Wrote {out_json} with {len(rows)} test case(s) across {len(devices)} device(s)")
+
+        # Compact GitHub Step Summary table.
+        sm = os.environ.get('GITHUB_STEP_SUMMARY')
+        if sm:
+            with open(sm, 'a') as fh:
+                fh.write(f"\n### {addon} — {platform} test cases\n\n")
+                fh.write('| Test | ' + ' | '.join(devices) + ' |\n')
+                fh.write('| --- | ' + ' | '.join(['---'] * len(devices)) + ' |\n')
+                icon = {'passed': '✅', 'failed': '❌', 'skipped': '⏭️', 'errored': '⚠️'}
+                for title in sorted(rows):
+                    cells = []
+                    for dv in devices:
+                        r = rows[title].get(dv)
+                        cells.append(icon.get(r['status'], '–') + (f" {r['durationMs']//1000}s" if r and r['status'] not in ('skipped',) and r['durationMs'] else '') if r else '–')
+                    fh.write(f"| {title} | " + ' | '.join(cells) + ' |\n')
+                fh.write('\n')
+        PY
+        echo "found=true" >> "$GITHUB_OUTPUT"
+
     - name: Upload console logs
       id: upload_console_log
       if: always() && inputs.run-arns != '[]' && inputs.run-arns != ''
@@ -229,6 +303,22 @@ runs:
         path: console-logs/
         retention-days: 30
         if-no-files-found: ignore
+
+    # QVAC-19368: link the uploaded console-logs artifact (which contains
+    # test-results-summary.json) from the run summary so reviewers can open it
+    # without digging through the Device Farm console.
+    - name: Link test-results artifact in summary
+      if: always() && steps.results_summary.outputs.found == 'true' && steps.upload_console_log.outputs.artifact-url != ''
+      shell: bash
+      env:
+        ARTIFACT_URL: ${{ steps.upload_console_log.outputs.artifact-url }}
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        {
+          echo ""
+          echo "📦 [${PLATFORM} test-results-summary.json + console logs]($ARTIFACT_URL)"
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Extract perf report (if enabled)
       id: extract_perf
