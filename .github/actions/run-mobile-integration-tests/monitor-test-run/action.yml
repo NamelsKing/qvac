@@ -103,8 +103,11 @@ runs:
           echo "::group::Run → tests mapping"
           for ((i=0; i<SPEC_COUNT && i<RUN_COUNT; i++)); do
             _name=$(echo "$TEST_SPECS_JSON" | jq -r ".[$i].name // \"?\"")
-            _grep=$(echo "$TEST_SPECS_JSON" | jq -r ".[$i].grep // \"\"")
-            _tests=$(echo "$_grep" | tr '|' ', ')
+            # QVAC-19368: prefer the `tests` field (covers default single-spec
+            # mode where grep is empty) and fall back to `grep` for older
+            # callers that don't emit `tests`.
+            _list=$(echo "$TEST_SPECS_JSON" | jq -r ".[$i].tests // .[$i].grep // \"\"")
+            _tests=$(echo "$_list" | tr '|' ', ')
             echo "  Run $((i+1)): $_name → $_tests"
           done
           echo "::endgroup::"
@@ -313,7 +316,8 @@ runs:
             _idx=$((RUN_INDEX - 1))
             _spec_tests=""
             if [ "$SPEC_COUNT" -gt 0 ] && [ "$_idx" -lt "$SPEC_COUNT" ]; then
-              _spec_tests=$(echo "$TEST_SPECS_JSON" | jq -r ".[$_idx].grep // \"\"" | tr '|' ', ')
+              # QVAC-19368: prefer `tests` (default-mode list), fall back to grep.
+              _spec_tests=$(echo "$TEST_SPECS_JSON" | jq -r ".[$_idx].tests // .[$_idx].grep // \"\"" | tr '|' ', ')
             fi
             if [ -n "$_spec_tests" ]; then
               echo "--- Run $RUN_INDEX: $RUN_NAME_LABEL (Result: $RESULT) [tests: $_spec_tests] ---"
