@@ -344,6 +344,15 @@ async function main () {
           let firstOutput = null
           let promptError = null
 
+          // Warmup run (discarded) so the first measured repeat isn't skewed by
+          // cold-start graph build / GPU kernel warmup. Without it the first run
+          // is a large outlier that makes the TTFT/ppTPS mean ± stddev
+          // meaningless. Mirrors the mobile runner's warmup.
+          try {
+            const warmup = await model.run(prompt.messages)
+            await warmup.onUpdate(() => {}).await()
+          } catch (_) { /* measured runs below surface any real error */ }
+
           for (let repeat = 1; repeat <= repeats; repeat++) {
             try {
               const runStart = process.hrtime()
