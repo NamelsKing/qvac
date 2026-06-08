@@ -18,14 +18,8 @@ namespace pi05_test {
 // Computes a fully-built forward graph on the CPU backend. Returns the compute
 // status so call sites keep asserting ASSERT_EQ(..., GGML_STATUS_SUCCESS).
 inline ggml_status computeGraphCpu(ggml_cgraph* gf) {
-  // Backends register once per process; load_all is idempotent and a no-op for
-  // backends that are already present (statically linked builds).
-  static const bool kBackendsLoaded = [] {
-    ggml_backend_load_all();
-    return true;
-  }();
-  (void)kBackendsLoaded;
-
+  // Backends are loaded once before any test runs by the global test
+  // environment (backend_env.cpp), so a CPU device is available here.
   ggml_backend_dev_t cpuDev =
       ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
   if (cpuDev == nullptr) {

@@ -19,6 +19,7 @@ add_executable(
   test_pi05_m3_12_ode_loop.cpp
   test_pi05_m3_13_end_to_end.cpp
   test_pi05_integration.cpp
+  backend_env.cpp
   ${CMAKE_SOURCE_DIR}/addon/src/model-interface/smolvla.cpp
   ${CMAKE_SOURCE_DIR}/addon/src/model-interface/smolvla_adapter.cpp
   ${CMAKE_SOURCE_DIR}/addon/src/model-interface/pi05.cpp
