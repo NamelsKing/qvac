@@ -11,6 +11,16 @@
 #include <ggml-backend.h>
 #include <gtest/gtest.h>
 
+// The ggml Vulkan backend leaks a small, one-time allocation while enumerating
+// devices at registration (ggml_backend_vk_reg_get_device) — a known upstream
+// ggml issue, benign (one-time, non-growing). classification is a CPU-only
+// model that only pulls in the Vulkan module incidentally via load_all under
+// GGML_BACKEND_DL; suppress that specific third-party leak so LeakSanitizer
+// doesn't fail the run. All test assertions still execute unchanged.
+extern "C" const char* __lsan_default_suppressions() {
+  return "leak:ggml_backend_vk_reg_get_device\n";
+}
+
 namespace {
 
 class GgmlBackendEnvironment : public ::testing::Environment {

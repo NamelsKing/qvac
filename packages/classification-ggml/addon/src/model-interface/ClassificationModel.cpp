@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(GGML_BACKEND_DL)
 #include <filesystem>
 #endif
 

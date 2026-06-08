@@ -26,6 +26,12 @@ target_compile_definitions(addon-test PRIVATE GTEST_HAS_POSIX_RE=0)
 target_compile_definitions(
   addon-test PRIVATE GGML_BACKEND_DIR="$<TARGET_FILE_DIR:ggml::ggml>")
 
+# ClassificationModel.cpp references BACKENDS_SUBDIR on its DL load path. The
+# addon target defines it, but addon-test compiles that TU separately. The test
+# passes an empty backendsDir (backends are preloaded by backend_env), so the
+# value is never used at runtime — a placeholder just lets the TU compile.
+target_compile_definitions(addon-test PRIVATE BACKENDS_SUBDIR="classification-ggml")
+
 if(NOT WIN32)
   target_compile_options(addon-test PRIVATE -fno-omit-frame-pointer)
 endif()
