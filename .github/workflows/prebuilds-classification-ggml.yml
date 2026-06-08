@@ -41,4 +41,8 @@ jobs:
       ref: ${{ inputs.ref }}
       repository: ${{ inputs.repository }}
       artifact-name-prefix: classification-ggml-
+      # classification-ggml now builds the GGML_BACKEND_DL fabric (gpu-backends),
+      # so the build host needs the Vulkan SDK — find_package(ggml) pulls in
+      # find_dependency(Vulkan) and fails without it (incl. on arm64).
+      include-vulkan-sdk: true
     secrets: inherit
