@@ -17,7 +17,6 @@
 #include <dlfcn.h>
 
 #include <filesystem>
-#include <iostream>
 #include <string>
 
 #include <ggml-backend.h>
@@ -46,29 +45,7 @@ std::string ggmlLibDir() {
 
 class BackendEnvironment : public ::testing::Environment {
  public:
-  void SetUp() override {
-    const std::string dir = ggmlLibDir();
-    std::cerr << "[backend_env] ggmlLibDir='" << dir << "'\n";
-    std::error_code ec;
-    if (!dir.empty() && std::filesystem::is_directory(dir, ec)) {
-      for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
-        const std::string n = e.path().filename().string();
-        if (n.find("ggml") != std::string::npos &&
-            n.find(".so") != std::string::npos) {
-          std::cerr << "[backend_env]   module: " << n << "\n";
-        }
-      }
-    }
-    vla_backend_selection::loadBackendsOnce(dir);
-    const size_t n = ggml_backend_dev_count();
-    std::cerr << "[backend_env] ggml_backend_dev_count=" << n << "\n";
-    for (size_t i = 0; i < n; ++i) {
-      ggml_backend_dev_t d = ggml_backend_dev_get(i);
-      std::cerr << "[backend_env]   dev[" << i
-                << "] type=" << static_cast<int>(ggml_backend_dev_type(d))
-                << " name=" << ggml_backend_dev_name(d) << "\n";
-    }
-  }
+  void SetUp() override { vla_backend_selection::loadBackendsOnce(ggmlLibDir()); }
 };
 
 // Registered at static-init (before main), so gtest_main runs SetUp() ahead of
