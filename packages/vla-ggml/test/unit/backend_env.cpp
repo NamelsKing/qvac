@@ -14,8 +14,6 @@
 // so this first load wins and the factory test's later loadBackendsOnce("")
 // becomes a no-op.
 
-#include <dlfcn.h>
-
 #include <filesystem>
 #include <string>
 
@@ -23,6 +21,13 @@
 #include <gtest/gtest.h>
 
 #include "utils/BackendSelection.hpp"
+
+// dladdr/dlfcn is the POSIX fallback used only when CMake didn't inject
+// GGML_BACKEND_DIR. It doesn't exist on Windows (a static, non-DL build where
+// GGML_BACKEND_DIR is always defined), so keep the include behind the guard.
+#ifndef GGML_BACKEND_DIR
+#include <dlfcn.h>
+#endif
 
 namespace {
 
