@@ -28,15 +28,20 @@
 namespace {
 
 // Directory of the ggml core library linked into this test binary, where the
-// DL backend modules are co-installed. Empty string if it can't be resolved
-// (e.g. a static build), which loadBackendsOnce treats as the default search.
+// DL backend modules are co-installed. CMake injects the absolute path via
+// GGML_BACKEND_DIR; we fall back to dladdr (and then the default search) only
+// if it isn't defined.
 std::string ggmlLibDir() {
+#ifdef GGML_BACKEND_DIR
+  return GGML_BACKEND_DIR;
+#else
   Dl_info info{};
   if (dladdr(reinterpret_cast<const void*>(&ggml_backend_load_all), &info) != 0 &&
       info.dli_fname != nullptr) {
     return std::filesystem::path(info.dli_fname).parent_path().string();
   }
   return "";
+#endif
 }
 
 class BackendEnvironment : public ::testing::Environment {
