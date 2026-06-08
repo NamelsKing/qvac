@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <ggml-backend.h>
+#include <ggml.h>
 
 // Uses the package logging shim (see easyocr/pipeline/qlog.hpp). The shim is a
 // no-op on desktop builds, so the authoritative, programmatically observable
@@ -199,10 +200,69 @@ bool isOpenCLBackendName(std::string_view backendName) {
 
 namespace {
 
-// Resolve a GPU-backed request (Vulkan or Metal). On success fills `sel` with
-// the matched device (including its ggml index and description) and returns
-// true; otherwise records a CPU-fallback reason and returns false (the caller
-// then resolves the CPU device).
+// Probe whether `dev` can actually run the ops every OCR graph needs. ggml
+// hard-aborts (GGML_ASSERT in the backend) when a compute graph contains an op
+// the selected backend does not implement — so a GPU backend that cannot run a
+// required op must be rejected here, in favour of CPU, rather than crashing at
+// inference time (QVAC-19798: ggml's OpenCL backend lacks POOL_2D and aborts on
+// the CRAFT detector).
+//
+// POOL_2D is a reliable representative probe: it is used by every OCR graph
+// (EasyOCR CRAFT max-pools, CRNN max/avg-pools, DocTR DBNet / recognizer SE
+// avg-pools) and is exactly the op ggml's OpenCL backend is missing, while the
+// full-featured Vulkan/Metal backends support it. The probe op mirrors the
+// production call in `easyocr/craft.cpp` (`maxpool_2x2`) so a device that runs
+// OCR for real is never falsely rejected.
+bool deviceSupportsRequiredOcrOps(ggml_backend_dev_t dev) {
+  if (dev == nullptr) {
+    return false;
+  }
+  // Small no_alloc scratch context: we only build op metadata to query backend
+  // support, never allocate tensor data. Room for a handful of tensors.
+  constexpr size_t kProbeTensors = 4;
+  // Arbitrary small NCHW probe shape; only the op + tensor types matter for
+  // `ggml_backend_dev_supports_op`, not the extents.
+  constexpr int64_t kProbeW = 16;
+  constexpr int64_t kProbeH = 16;
+  constexpr int64_t kProbeC = 8;
+  constexpr int64_t kProbeN = 1;
+  // 2x2 stride-2 max pool — mirrors `easyocr/craft.cpp` maxpool_2x2.
+  constexpr int kPoolKernel = 2;
+  constexpr int kPoolStride = 2;
+  const struct ggml_init_params params{
+      /*.mem_size   =*/ggml_tensor_overhead() * kProbeTensors,
+      /*.mem_buffer =*/nullptr,
+      /*.no_alloc   =*/true,
+  };
+  ggml_context* ctx = ggml_init(params);
+  if (ctx == nullptr) {
+    return false;
+  }
+  bool supported = false;
+  ggml_tensor* input = ggml_new_tensor_4d(
+      ctx, GGML_TYPE_F32, kProbeW, kProbeH, kProbeC, kProbeN);
+  if (input != nullptr) {
+    ggml_tensor* pooled = ggml_pool_2d(
+        ctx,
+        input,
+        GGML_OP_POOL_MAX,
+        kPoolKernel,
+        kPoolKernel,
+        kPoolStride,
+        kPoolStride,
+        0.0F,
+        0.0F);
+    supported =
+        (pooled != nullptr) && ggml_backend_dev_supports_op(dev, pooled);
+  }
+  ggml_free(ctx);
+  return supported;
+}
+
+// Resolve a GPU-backed request (Vulkan, Metal or OpenCL). On success fills
+// `sel` with the matched device (including its ggml index and description) and
+// returns true; otherwise records a CPU-fallback reason and returns false (the
+// caller then resolves the CPU device).
 //
 // `gpuDevice` selects the Nth matching device (0-based); when unset, a discrete
 // GPU is preferred over an integrated one.
@@ -265,6 +325,22 @@ bool trySelectGpu(
   }
 
   const MatchingDevice& md = candidates[*chosen];
+
+  // Guard against backends that match the request but cannot run the OCR ops
+  // (e.g. ggml's OpenCL backend selects on Adreno but lacks POOL_2D and would
+  // GGML_ABORT at inference). Reject here and fall back to CPU with a clear
+  // reason instead of crashing. Full-featured Vulkan/Metal devices pass.
+  if (!deviceSupportsRequiredOcrOps(md.dev)) {
+    sel.fallbackReason =
+        std::string(label) + " backend '" +
+        (!md.name.empty() ? md.name : std::string(label)) + "' (" +
+        md.description +
+        ") does not implement the OCR vision ops (e.g. POOL_2D); falling back "
+        "to CPU";
+    QLOG(Priority::WARN, std::string("ocr-ggml: ") + sel.fallbackReason);
+    return false;
+  }
+
   sel.device = md.dev;
   sel.backendName = !md.name.empty() ? md.name : std::string(label);
   sel.backendDevice = deviceTypeName(md.type);

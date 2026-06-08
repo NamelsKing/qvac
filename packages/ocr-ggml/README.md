@@ -143,7 +143,7 @@ console.log(ocr.getBackendInfo())
 // no Vulkan device → { requested: 'vulkan', backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: 'Vulkan backend requested but no Vulkan-capable GPU device was found; falling back to CPU' }
 // Metal available  → { requested: 'metal',  backendDevice: 'GPU', backendName: 'MTL0', deviceIndex: 1, backendDescription: 'Apple M3 Ultra', fallbackReason: '' }  // device name; 'MTL1'… on a multi-GPU host
 // no Metal device  → { requested: 'metal',  backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: 'Metal backend requested but no Metal-capable GPU device was found; falling back to CPU' }
-// OpenCL available → { requested: 'opencl', backendDevice: 'GPU', backendName: 'GPUOpenCL', deviceIndex: 0, backendDescription: 'QUALCOMM Adreno(TM) 830', fallbackReason: '' }
+// OpenCL missing OCR ops → { requested: 'opencl', backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: "OpenCL backend 'GPUOpenCL' (QUALCOMM Adreno(TM) 830) does not implement the OCR vision ops (e.g. POOL_2D); falling back to CPU" }
 // no OpenCL device → { requested: 'opencl', backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: 'OpenCL backend requested but no OpenCL-capable GPU device was found; falling back to CPU' }
 ```
 
@@ -164,10 +164,18 @@ Behaviour and expectations:
   qvac-fabric `gpu-backends` feature (the default on Apple). These GPU backends
   are only produced on platforms/feature sets where the upstream ggml port
   builds them; on other hosts the request quietly falls back to CPU.
-- **OpenCL is the Adreno path.** Qualcomm **Adreno** GPUs are *skipped* on the
-  auto Vulkan path (their Vulkan compute is numerically broken), but are
-  selected as-is for `'opencl'` — OpenCL is Adreno's sound GPU path. On
-  non-Adreno hosts OpenCL works too wherever the lib + runtime are present.
+- **OpenCL is the Adreno path — but gated on op support.** Qualcomm **Adreno**
+  GPUs are *skipped* on the auto Vulkan path (their Vulkan compute is
+  numerically broken) and are not rejected for `'opencl'` (OpenCL is Adreno's
+  sound GPU family). However, the OCR graphs are CNNs built from `POOL_2D`,
+  conv, upscale and transpose-conv ops, and **ggml's current OpenCL backend does
+  not implement them** (it is matmul-focused, for LLM-style workloads). To avoid
+  a hard `GGML_ABORT` on an unsupported op, selection runs a `POOL_2D`
+  op-support probe on the chosen GPU device; a backend that cannot run it
+  (today: OpenCL) transparently falls back to CPU with a `fallbackReason`. So
+  requesting `'opencl'` is **safe (never crashes)** but currently resolves to
+  **CPU** for OCR until ggml's OpenCL backend gains the required vision ops.
+  Vulkan/Metal pass the probe and run on GPU as before.
 - **DocTR recognizer.** Only the MobileNetV3 feature-extractor graph runs on
   the selected ggml device; the recognizer's downstream LSTM + linear
   classifier always run on CPU (plain C++, no ggml graph), regardless of
