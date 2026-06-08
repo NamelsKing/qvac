@@ -1,0 +1,458 @@
+#!/usr/bin/env node
+'use strict'
+
+// Unified benchmark report renderer for the Qwen3.5 perf benchmark.
+//
+// Reads perf JSON from --dir (recursively) and renders ONE markdown report:
+//   - header with addon version, prompt size, runs-per-config, GPU
+//   - one table per device: Config | TTFT (ms) | TPS | ppTPS | Tokens
+//   - optional Δ columns when --compare-dir is provided (cross-run regression)
+//   - a closing "best config per device" summary
+//
+// Two input schemas are normalised:
+//   desktop sweep:  { models:[{modelId, cases:[{quantization, runtimeConfig,
+//                    metrics:{ttftMsMean,tpsMean,ppTpsMean,promptTokens,
+//                    generatedTokens}, status, isBaseline}]}], repeats, ... }
+//   mobile report:  { addon, device:{name}, results:[{test, metrics:{ttft_ms,
+//                    tps, pp_tps, generated_tokens, prompt_tokens}}] }
+
+const fs = require('fs')
+const path = require('path')
+
+function parseArgs (argv) {
+  const a = {
+    dir: null,
+    output: null,
+    desktopDevice: 'Desktop (linux-x64 GPU)',
+    addonVersion: null,
+    compareDir: null,
+    baselineRunId: null,
+    baselineRunNumber: null,
+    baselineRunUrl: null
+  }
+  for (let i = 2; i < argv.length; i++) {
+    const t = argv[i]
+    if (t === '--dir') a.dir = argv[++i]
+    else if (t === '--output') a.output = argv[++i]
+    else if (t === '--desktop-device') a.desktopDevice = argv[++i]
+    else if (t === '--addon-version') a.addonVersion = argv[++i]
+    else if (t === '--compare-dir') a.compareDir = argv[++i]
+    else if (t === '--baseline-run-id') a.baselineRunId = argv[++i]
+    else if (t === '--baseline-run-number') a.baselineRunNumber = argv[++i]
+    else if (t === '--baseline-run-url') a.baselineRunUrl = argv[++i]
+  }
+  if (!a.dir) {
+    throw new Error(
+      'usage: render-report.js --dir <path> [--output <md>] ' +
+      '[--desktop-device <name>] [--addon-version <ver>] [--compare-dir <path>]'
+    )
+  }
+  return a
+}
+
+function walkJson (dir) {
+  const out = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...walkJson(p))
+    else if (entry.name.endsWith('.json')) out.push(p)
+  }
+  return out
+}
+
+function num (v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+function int (v) {
+  const n = num(v)
+  return n !== null ? Math.round(n) : null
+}
+
+// Collect metadata and rows from all files in a directory.
+// Returns { rows, meta } where meta = { addonVersion, repeats, promptTokens }.
+function loadDir (dir, desktopDevice) {
+  const files = walkJson(dir)
+  // The desktop device name (incl. the detected GPU) is stamped into
+  // desktop-meta.json at run time, so re-renders show the real GPU even though
+  // the desktop job didn't run. Falls back to the passed/default name.
+  let resolvedDesktop = desktopDevice
+  for (const f of files) {
+    try {
+      const d = JSON.parse(fs.readFileSync(f, 'utf8'))
+      if (d && typeof d.desktopDevice === 'string' && d.desktopDevice) { resolvedDesktop = d.desktopDevice; break }
+    } catch {}
+  }
+  const meta = { addonVersion: null, repeats: null, promptTokens: null }
+  let rows = []
+  for (const f of files) {
+    const r = rowsFromFile(f, resolvedDesktop, meta)
+    rows.push(...r)
+  }
+  rows = aggregate(rows)
+  return { rows, meta, desktopDevice: resolvedDesktop }
+}
+
+// Normalise any report file into rows: { device, config, ttft, tps, ppTps, tokens, crashed }
+// Also fills in meta fields when found.
+function rowsFromFile (file, desktopDevice, meta) {
+  let doc
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return [] }
+  const rows = []
+
+  // run-meta.json — the addon version stamped into the run's artifacts at
+  // benchmark time. The version label (current run and baseline) comes from
+  // here, so it always reflects what actually ran.
+  if (doc && typeof doc.addonVersion === 'string') {
+    if (meta.addonVersion === null) meta.addonVersion = doc.addonVersion
+    return rows
+  }
+
+  // desktop-meta.json — the desktop device name (resolved in loadDir's first
+  // pass); nothing to render from it here.
+  if (doc && typeof doc.desktopDevice === 'string') return rows
+
+  // Desktop sweep schema
+  if (Array.isArray(doc.models) && doc.models.length && Array.isArray(doc.models[0].cases)) {
+    if (num(doc.repeats) !== null && meta.repeats === null) meta.repeats = doc.repeats
+    for (const model of doc.models) {
+      for (const c of model.cases) {
+        if (c.isBaseline) continue
+        const rc = c.runtimeConfig || {}
+        const config = configLabel({
+          model: `${model.modelId}-${c.quantization}`,
+          backend: rc.device,
+          rb: rc['reasoning-budget'],
+          ck: rc['cache-type-k'],
+          cv: rc['cache-type-v']
+        })
+        const m = c.metrics || {}
+        if (int(m.promptTokens) !== null && meta.promptTokens === null) {
+          meta.promptTokens = int(m.promptTokens)
+        }
+        const crashed = c.status && c.status !== 'ok' && c.status !== 'partial-failure'
+        rows.push({
+          device: desktopDevice,
+          config,
+          ttft: num(m.ttftMsMean),
+          ttftStd: num(m.ttftMsStd),
+          tps: num(m.tpsMean),
+          tpsStd: num(m.tpsStd),
+          ppTps: num(m.ppTpsMean),
+          ppTpsStd: num(m.ppTpsStd),
+          tokens: int(m.generatedTokens),
+          crashed: !!crashed,
+          preAggregated: true,
+          sampleCount: int(m.repeats)
+        })
+      }
+    }
+    return rows
+  }
+
+  // Mobile perf-report schema
+  if (doc.device && Array.isArray(doc.results)) {
+    // doc.addon is the addon NAME ("llamacpp-llm"), not a version — never use
+    // it as the version label. The real version comes from run-meta.json.
+    const device = (doc.device.name || 'unknown').trim()
+    for (const r of doc.results) {
+      const m = r.metrics || {}
+      if (int(m.prompt_tokens) !== null && meta.promptTokens === null) {
+        meta.promptTokens = int(m.prompt_tokens)
+      }
+      const crashed = (r.status && String(r.status).toLowerCase() === 'crashed') ||
+        (num(m.ttft_ms) === null && num(m.tps) === null && num(m.pp_tps) === null)
+      rows.push({
+        device,
+        config: r.test || '(unknown)',
+        ttft: num(m.ttft_ms),
+        tps: num(m.tps),
+        ppTps: num(m.pp_tps),
+        tokens: int(m.generated_tokens),
+        crashed: !!crashed
+      })
+    }
+    return rows
+  }
+
+  return rows
+}
+
+function configLabel ({ model, backend, rb, ck, cv }) {
+  const parts = [`[${model}]`]
+  if (backend) parts.push(`[${backend}]`)
+  if (rb !== undefined && rb !== null && rb !== '') parts.push(`[rb=${rb}]`)
+  if (ck || cv) parts.push(ck === cv ? `[kv=${ck}]` : `[kv=${ck || '?'}/${cv || '?'}]`)
+  return parts.join(' ')
+}
+
+function fmt (v, decimals = 2) {
+  if (v === null) return '-'
+  return (Math.round(v * Math.pow(10, decimals)) / Math.pow(10, decimals)).toFixed(decimals)
+}
+
+function fmtDelta (v) {
+  if (v === null) return '-'
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${fmt(v)}`
+}
+
+// "mean ± std" when there is more than one sample; bare mean otherwise.
+function fmtMS (meanV, stdV, sampleCount) {
+  if (meanV === null || meanV === undefined) return '-'
+  if (stdV !== null && stdV !== undefined && sampleCount && sampleCount > 1) {
+    return `${fmt(meanV)} ± ${fmt(stdV)}`
+  }
+  return fmt(meanV)
+}
+
+function mean (values) {
+  if (!values.length) return null
+  return values.reduce((a, b) => a + b, 0) / values.length
+}
+
+// Population standard deviation — matches the desktop sweep's math.js stddev.
+function stddev (values) {
+  if (!values.length) return null
+  if (values.length === 1) return 0
+  const avg = mean(values)
+  let s = 0
+  for (const v of values) s += (v - avg) * (v - avg)
+  return Math.sqrt(s / values.length)
+}
+
+// Group raw rows by (device, config) and reduce each group to a single row
+// carrying mean + stddev per metric. Desktop rows arrive pre-aggregated (they
+// already hold *Std fields from the 5-repeat sweep); mobile rows arrive as one
+// row per repetition and are aggregated here across the non-crashed samples.
+function aggregate (rows) {
+  const byKey = new Map()
+  for (const r of rows) {
+    const k = `${r.device}@@${r.config}`
+    if (!byKey.has(k)) byKey.set(k, [])
+    byKey.get(k).push(r)
+  }
+  const out = []
+  for (const group of byKey.values()) {
+    const { device, config } = group[0]
+    const pre = group.find(r => r.preAggregated && !r.crashed)
+    if (pre) { out.push(pre); continue }
+    if (group.some(r => r.preAggregated)) {
+      out.push({ device, config, crashed: true, tokens: null }); continue
+    }
+    const real = group.filter(r => !r.crashed)
+    if (!real.length) {
+      out.push({ device, config, crashed: true, tokens: null }); continue
+    }
+    const ttftVals = real.map(r => r.ttft).filter(v => v !== null)
+    const tpsVals = real.map(r => r.tps).filter(v => v !== null)
+    const ppVals = real.map(r => r.ppTps).filter(v => v !== null)
+    out.push({
+      device,
+      config,
+      crashed: false,
+      ttft: mean(ttftVals),
+      ttftStd: stddev(ttftVals),
+      tps: mean(tpsVals),
+      tpsStd: stddev(tpsVals),
+      ppTps: mean(ppVals),
+      ppTpsStd: stddev(ppVals),
+      tokens: real.map(r => r.tokens).find(v => v !== null) ?? null,
+      sampleCount: real.length
+    })
+  }
+  return out
+}
+
+function buildBaselineMap (baseRows) {
+  const m = new Map()
+  for (const r of baseRows) m.set(`${r.device}@@${r.config}`, r)
+  return m
+}
+
+// Largest mobile sample count across a run's aggregated rows (the mobile
+// repetition count, read from the data rather than hard-coded).
+function mobileRepeats (rows, desktopDevice) {
+  const counts = rows
+    .filter(r => r.device !== desktopDevice && !r.crashed && r.sampleCount)
+    .map(r => r.sampleCount)
+  return counts.length ? Math.max(...counts) : null
+}
+
+// Build the "Addon: X · Prompt: Y · Repeats: ..." metadata line for a run.
+function metaLine (meta, addonVersion, hasDesktopRows, mobileReps) {
+  const parts = []
+  if (addonVersion) parts.push(`**Addon:** \`${addonVersion}\``)
+  if (meta.promptTokens !== null) parts.push(`**Prompt:** ${meta.promptTokens} tokens`)
+  if (meta.repeats !== null || mobileReps !== null) {
+    const reps = []
+    if (hasDesktopRows && meta.repeats !== null) reps.push(`desktop=${meta.repeats}`)
+    if (mobileReps !== null) reps.push(`mobile=${mobileReps}`)
+    parts.push(`**Repeats:** ${reps.join(', ')}`)
+  }
+  return parts.join(' · ')
+}
+
+function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseline) {
+  const byDevice = new Map()
+  for (const r of rows) {
+    if (!byDevice.has(r.device)) byDevice.set(r.device, [])
+    byDevice.get(r.device).push(r)
+  }
+  const devices = [...byDevice.keys()].sort((a, b) => {
+    if (a === desktopDevice) return -1
+    if (b === desktopDevice) return 1
+    return a.localeCompare(b)
+  })
+
+  // Stamped version (from run-meta) wins over any manually-passed value.
+  const addonVersion = meta.addonVersion || addonVersionArg || null
+  const comparing = baselineMap !== null
+
+  const lines = []
+  lines.push('# Qwen3.5 Benchmark Results')
+  lines.push('')
+
+  // Current-run metadata block
+  const hasDesktopRows = rows.some(r => r.device === desktopDevice)
+  const curLine = metaLine(meta, addonVersion, hasDesktopRows, mobileRepeats(rows, desktopDevice))
+  if (curLine) {
+    lines.push(curLine)
+    lines.push('')
+  }
+
+  // Baseline metadata block — same fields as the current run, plus the run
+  // link. Classify its rows by the BASELINE's own desktop device name (which
+  // may differ from the current run's, e.g. a different GPU).
+  if (comparing && baseline) {
+    const bDesktop = baseline.desktopDevice || desktopDevice
+    const bHasDesktop = baseline.rows.some(r => r.device === bDesktop)
+    const bAddon = baseline.meta.addonVersion || null
+    const bLine = metaLine(baseline.meta, bAddon, bHasDesktop, mobileRepeats(baseline.rows, bDesktop))
+    const idParts = []
+    if (baseline.runNumber) idParts.push(`run #${baseline.runNumber}`)
+    if (baseline.runId) idParts.push(`run ID ${baseline.runId}`)
+    const heading = idParts.length ? idParts.join(', ') : 'previous run'
+    lines.push(`> **Comparing against baseline (${heading}):**`)
+    if (bLine) lines.push('> ' + bLine)
+    if (baseline.runUrl) {
+      lines.push(`> [View baseline run](${baseline.runUrl})`)
+    }
+    lines.push('')
+  }
+
+  lines.push(
+    'Metrics are addon `runtimeStats`: ' +
+    'TTFT = time to first token (ms), TPS = decode tokens/sec, ' +
+    'ppTPS = prefill tokens/sec, Tokens = generated tokens.' +
+    (comparing ? ' Δ = current minus baseline (positive = improvement for TPS/ppTPS, negative = improvement for TTFT).' : '') +
+    ' `Crashed` = configuration crashed or produced no output.'
+  )
+  lines.push('')
+
+  const hasTokens = rows.some(r => r.tokens !== null)
+
+  for (const device of devices) {
+    const items = byDevice.get(device).slice().sort((a, b) => a.config.localeCompare(b.config))
+    lines.push(`## ${device}`)
+    lines.push('')
+
+    if (comparing) {
+      const hdr = hasTokens
+        ? '| Config | TTFT (ms) | Δ TTFT | TPS | Δ TPS | ppTPS | Δ ppTPS | Tokens |'
+        : '| Config | TTFT (ms) | Δ TTFT | TPS | Δ TPS | ppTPS | Δ ppTPS |'
+      const sep = hasTokens
+        ? '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
+        : '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
+      lines.push(hdr)
+      lines.push(sep)
+      for (const r of items) {
+        const b = baselineMap.get(`${r.device}@@${r.config}`)
+        if (r.crashed) {
+          const crash = hasTokens
+            ? `| ${r.config} | Crashed | - | Crashed | - | Crashed | - | - |`
+            : `| ${r.config} | Crashed | - | Crashed | - | Crashed | - |`
+          lines.push(crash)
+        } else {
+          const dTtft = (b && !b.crashed && r.ttft !== null && b.ttft !== null) ? r.ttft - b.ttft : null
+          const dTps = (b && !b.crashed && r.tps !== null && b.tps !== null) ? r.tps - b.tps : null
+          const dPp = (b && !b.crashed && r.ppTps !== null && b.ppTps !== null) ? r.ppTps - b.ppTps : null
+          const row = hasTokens
+            ? `| ${r.config} | ${fmtMS(r.ttft, r.ttftStd, r.sampleCount)} | ${fmtDelta(dTtft)} | ${fmtMS(r.tps, r.tpsStd, r.sampleCount)} | ${fmtDelta(dTps)} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ${fmtDelta(dPp)} | ${r.tokens !== null ? r.tokens : '-'} |`
+            : `| ${r.config} | ${fmtMS(r.ttft, r.ttftStd, r.sampleCount)} | ${fmtDelta(dTtft)} | ${fmtMS(r.tps, r.tpsStd, r.sampleCount)} | ${fmtDelta(dTps)} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ${fmtDelta(dPp)} |`
+          lines.push(row)
+        }
+      }
+    } else {
+      const hdr = hasTokens
+        ? '| Config | TTFT (ms) | TPS | ppTPS | Tokens |'
+        : '| Config | TTFT (ms) | TPS | ppTPS |'
+      const sep = hasTokens
+        ? '| --- | ---: | ---: | ---: | ---: |'
+        : '| --- | ---: | ---: | ---: |'
+      lines.push(hdr)
+      lines.push(sep)
+      for (const r of items) {
+        if (r.crashed) {
+          lines.push(hasTokens
+            ? `| ${r.config} | Crashed | Crashed | Crashed | - |`
+            : `| ${r.config} | Crashed | Crashed | Crashed |`)
+        } else {
+          lines.push(hasTokens
+            ? `| ${r.config} | ${fmtMS(r.ttft, r.ttftStd, r.sampleCount)} | ${fmtMS(r.tps, r.tpsStd, r.sampleCount)} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} | ${r.tokens !== null ? r.tokens : '-'} |`
+            : `| ${r.config} | ${fmtMS(r.ttft, r.ttftStd, r.sampleCount)} | ${fmtMS(r.tps, r.tpsStd, r.sampleCount)} | ${fmtMS(r.ppTps, r.ppTpsStd, r.sampleCount)} |`)
+        }
+      }
+    }
+    lines.push('')
+  }
+
+  lines.push('## Best configuration per device')
+  lines.push('')
+  lines.push('| Device | Highest TPS | Highest ppTPS |')
+  lines.push('| --- | --- | --- |')
+  for (const device of devices) {
+    const ok = byDevice.get(device).filter(r => !r.crashed)
+    const bestTps = ok.filter(r => r.tps !== null).sort((a, b) => b.tps - a.tps)[0]
+    const bestPp = ok.filter(r => r.ppTps !== null).sort((a, b) => b.ppTps - a.ppTps)[0]
+    const tpsCell = bestTps ? `${bestTps.config} — ${fmt(bestTps.tps)}` : '-'
+    const ppCell = bestPp ? `${bestPp.config} — ${fmt(bestPp.ppTps)}` : '-'
+    lines.push(`| ${device} | ${tpsCell} | ${ppCell} |`)
+  }
+  lines.push('')
+  return lines.join('\n') + '\n'
+}
+
+function main () {
+  const args = parseArgs(process.argv)
+
+  const { rows, meta, desktopDevice } = loadDir(args.dir, args.desktopDevice)
+
+  let baselineMap = null
+  let baseline = null
+  if (args.compareDir) {
+    const { rows: baseRows, meta: baseMeta, desktopDevice: baselineDesktop } = loadDir(args.compareDir, desktopDevice)
+    baselineMap = buildBaselineMap(baseRows)
+    baseline = {
+      rows: baseRows,
+      meta: baseMeta,
+      desktopDevice: baselineDesktop,
+      runId: args.baselineRunId,
+      runNumber: args.baselineRunNumber,
+      runUrl: args.baselineRunUrl
+    }
+  }
+
+  if (rows.length === 0) {
+    const msg = 'No benchmark results found.\n'
+    if (args.output) fs.writeFileSync(args.output, msg)
+    else process.stdout.write(msg)
+    return
+  }
+
+  const md = render(rows, desktopDevice, meta, args.addonVersion, baselineMap, baseline)
+  if (args.output) fs.writeFileSync(args.output, md)
+  else process.stdout.write(md)
+}
+
+main()
