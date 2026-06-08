@@ -15,7 +15,7 @@
 
 #include <gguf.h>
 #include <ggml.h>
-#include <ggml-cpu.h>
+#include "pi05_compute.hpp"
 
 #include "model-interface/pi05.hpp"
 #include "utils/safetensors_lite.hpp"
@@ -101,7 +101,7 @@ void runOne(float t,
 
   struct ggml_cgraph* gf = ggml_new_graph(ctx_g);
   ggml_build_forward_expand(gf, out);
-  ASSERT_EQ(ggml_graph_compute_with_ctx(ctx_g, gf, /*n_threads=*/4),
+  ASSERT_EQ(pi05_test::computeGraphCpu(gf),
             GGML_STATUS_SUCCESS);
 
   ASSERT_EQ(ggml_nelements(out), static_cast<int64_t>(COND_DIM));
