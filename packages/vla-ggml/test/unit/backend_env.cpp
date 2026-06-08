@@ -1,22 +1,46 @@
 // Global test environment: load the ggml backends once before any test runs.
 //
 // In production the addon loads its backends at init via
-// vla_backend_selection::loadBackendsOnce() (called from the JS binding). The
-// unit tests link the addon objects directly and bypass that path, so under
-// GGML_BACKEND_DL=ON no backend — not even CPU — is registered. Any test that
-// computes a graph or constructs a model then fails with "no CPU backend
-// available". Registering this environment loads the backends the same way the
-// addon does, before the first test, so the suite mirrors production.
+// vla_backend_selection::loadBackendsOnce(backendsDir), where backendsDir is
+// the prebuilds folder holding the DL backend modules. The unit tests link the
+// addon objects directly and the factory test passes backendsDir="" — fine in a
+// static build (CPU is linked in), but under GGML_BACKEND_DL=ON it means no
+// backend gets loaded, so pi05LoadModel throws "no CPU backend available".
+//
+// The DL modules (libqvac-ggml-cpu-*.so) are installed next to the ggml core
+// library this test binary links. Resolve that directory at runtime via
+// dladdr() and hand it to loadBackendsOnce() — the same code path production
+// uses, just with the test's own lib dir. loadBackendsOnce is std::call_once,
+// so this first load wins and the factory test's later loadBackendsOnce("")
+// becomes a no-op.
 
+#include <dlfcn.h>
+
+#include <filesystem>
+#include <string>
+
+#include <ggml-backend.h>
 #include <gtest/gtest.h>
 
 #include "utils/BackendSelection.hpp"
 
 namespace {
 
+// Directory of the ggml core library linked into this test binary, where the
+// DL backend modules are co-installed. Empty string if it can't be resolved
+// (e.g. a static build), which loadBackendsOnce treats as the default search.
+std::string ggmlLibDir() {
+  Dl_info info{};
+  if (dladdr(reinterpret_cast<const void*>(&ggml_backend_load_all), &info) != 0 &&
+      info.dli_fname != nullptr) {
+    return std::filesystem::path(info.dli_fname).parent_path().string();
+  }
+  return "";
+}
+
 class BackendEnvironment : public ::testing::Environment {
  public:
-  void SetUp() override { vla_backend_selection::loadBackendsOnce(""); }
+  void SetUp() override { vla_backend_selection::loadBackendsOnce(ggmlLibDir()); }
 };
 
 // Registered at static-init (before main), so gtest_main runs SetUp() ahead of
