@@ -1,7 +1,7 @@
 {
   "default-registry": {
     "kind": "git",
-    "baseline": "dfc153cb1ee41b133544f2fc6486f4070a81cda0",
+    "baseline": "bb45bb3dd502ee45b89ed09b8e476124c0a8b2d1",
     "reference": "feat/ggml-dl-backends-linux",
     "repository": "https://github.com/tetherto/qvac-registry-vcpkg.git"
   },
