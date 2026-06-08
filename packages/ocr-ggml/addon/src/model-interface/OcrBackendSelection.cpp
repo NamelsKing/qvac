@@ -35,9 +35,10 @@ std::string toLower(std::string_view value) {
 // description reads e.g. "Adreno (TM) 830"). Adreno's Vulkan compute path is
 // numerically broken: vla-ggml measured cos-sim ~0.73 vs reference on Adreno
 // 830 (Galaxy S25 Ultra) while every other Vulkan/Metal target sits >0.999.
-// It does not crash — it silently produces wrong results — so auto-selection
-// must avoid it and fall back to CPU. (Adreno's OpenCL path is fine, but
-// ocr-ggml does not wire OpenCL today.)
+// It does not crash — it silently produces wrong results — so the auto Vulkan
+// path must avoid it and fall back to CPU. Adreno's OpenCL path is sound and is
+// the preferred GPU path there, so `BackendDevice::OPENCL` does NOT reject
+// Adreno (see `selectBackendDevice`).
 bool isAdrenoDescription(std::string_view description) {
   return toLower(description).find("adreno") != std::string::npos;
 }
@@ -189,6 +190,13 @@ bool isMetalBackendName(std::string_view backendName) {
   return lower.rfind("mtl", 0) == 0 || lower.rfind("metal", 0) == 0;
 }
 
+bool isOpenCLBackendName(std::string_view backendName) {
+  // ggml's OpenCL backend registers as "OpenCL" and names devices "GPUOpenCL";
+  // a substring match (like Vulkan) catches both the device name and the
+  // backend-registration name, case-insensitively.
+  return toLower(backendName).find("opencl") != std::string::npos;
+}
+
 namespace {
 
 // Resolve a GPU-backed request (Vulkan or Metal). On success fills `sel` with
@@ -287,6 +295,14 @@ selectBackendDevice(BackendDevice requested, std::optional<int> gpuDevice) {
     sel.requested = "metal";
     // Metal is Apple-only; no Adreno devices to guard against.
     if (trySelectGpu(sel, "Metal", isMetalBackendName, gpuDevice, false)) {
+      return sel;
+    }
+    break;
+  case BackendDevice::OPENCL:
+    sel.requested = "opencl";
+    // rejectAdreno = false: OpenCL is Adreno's sound compute path (the inverse
+    // of the Vulkan guard), so Adreno OpenCL devices are selected as-is.
+    if (trySelectGpu(sel, "OpenCL", isOpenCLBackendName, gpuDevice, false)) {
       return sel;
     }
     break;

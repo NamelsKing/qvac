@@ -15,6 +15,7 @@
       "runFullOcrSuiteTest"
     ],
     "regularB": [
+      "runAndroidOpenclTest",
       "runAndroidVulkanTest",
       "runBackendDeviceTest",
       "runCanvasSizeTest",
@@ -22,6 +23,7 @@
       "runLargeImagesTest",
       "runLifecycleTest",
       "runOcrBasicTest",
+      "runOpenclBackendTest",
       "runParamValidationTest",
       "runPipelineTest",
       "runRunInternalOrderingTest"
@@ -49,6 +51,7 @@
       "runLargeImagesTest",
       "runLifecycleTest",
       "runOcrBasicTest",
+      "runOpenclBackendTest",
       "runParamValidationTest",
       "runPipelineTest",
       "runRunInternalOrderingTest"
