@@ -80,14 +80,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
 
-      - if: matrix.platform == 'linux'
-        name: Set Vulkan SDK Path on Linux
-        shell: bash
-        # classification-ggml now builds the GGML_BACKEND_DL fabric (gpu-backends);
-        # find_package(ggml) -> find_dependency(Vulkan) needs the SDK, pre-installed
-        # on the self-hosted qvac runner at /opt/vulkansdk.
-        run: echo "VULKAN_SDK=/opt/vulkansdk/x86_64" >> $GITHUB_ENV
-
       - name: Setup vcpkg
         uses: tetherto/qvac/.github/actions/setup-vcpkg@6e8d3c306a462a58589396cda428d65e015f0d8b
         env:
