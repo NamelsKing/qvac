@@ -160,24 +160,35 @@ function downloadFile (url, destination, headers, redirects = 5) {
   })
 }
 
-// Retry transient network failures (connection resets, timeouts, 5xx) so a
-// single HuggingFace blip doesn't abort the whole benchmark. 404 and other
-// client errors are re-thrown immediately — the caller handles 404 via its
-// filename-candidate fallback.
-async function downloadFileWithRetry (url, destination, headers, attempts = 4) {
-  for (let attempt = 1; ; attempt++) {
+// Transient-error handling mirrors the addon's integration-test downloader
+// (test/integration/utils.js). That helper is Bare-only (bare-https) and can't
+// be imported into this Node script, so the semantics are duplicated here
+// rather than diverged: same error set, same exponential backoff with jitter.
+const TRANSIENT_ERROR_CODES = new Set([
+  'EAI_NODATA', 'EAI_AGAIN', 'ENOTFOUND', 'ETIMEDOUT',
+  'ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ESIZE'
+])
+
+function isTransientError (err) {
+  if (err && err.code && TRANSIENT_ERROR_CODES.has(err.code)) return true
+  // downloadFile reports HTTP failures with a numeric `code` (e.g. 500).
+  const status = (err && err.statusCode) || (err && typeof err.code === 'number' ? err.code : null)
+  if (status) return status === 408 || status === 429 || status >= 500
+  return false
+}
+
+// Retry transient network/HTTP failures so a single HuggingFace blip doesn't
+// abort the whole benchmark. 404 and other client errors are re-thrown
+// immediately — the caller handles 404 via its filename-candidate fallback.
+async function downloadFileWithRetry (url, destination, headers, retries = 3) {
+  for (let attempt = 0; ; attempt++) {
     try {
       return await downloadFile(url, destination, headers)
     } catch (error) {
-      const code = error && error.code
-      const msg = error && error.message ? error.message : String(error)
-      const transient = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) ||
-        (typeof code === 'number' && code >= 500) ||
-        /socket hang up|timed out|network|reset/i.test(msg)
-      if (!transient || attempt >= attempts) throw error
-      const delayMs = 2000 * attempt
-      console.log(`[addon] download attempt ${attempt}/${attempts} failed (${msg}); retrying in ${delayMs}ms`)
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      if (!isTransientError(error) || attempt >= retries) throw error
+      const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30_000)
+      console.log(`[addon] download attempt ${attempt + 1}/${retries + 1} failed (${(error && (error.code || error.message)) || error}), retrying in ${Math.round(delay)}ms...`)
+      await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
 }
