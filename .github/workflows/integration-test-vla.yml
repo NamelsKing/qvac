@@ -424,6 +424,12 @@ jobs:
           PI05_TEST_GGUF: ${{ !(matrix.platform == 'darwin' && matrix.arch == 'x64') && format('{0}/{1}/model/vla/pi05/pi05-base-q-aggressive.gguf', github.workspace, env.WORKDIR) || '' }}
           PI05_TEST_FIXTURE: ${{ !(matrix.platform == 'darwin' && matrix.arch == 'x64') && format('{0}/{1}/test/pi05-oracle/fixture.safetensors', github.workspace, env.WORKDIR) || '' }}
           PI05_TEST_ACTIVATIONS: ${{ !(matrix.platform == 'darwin' && matrix.arch == 'x64') && format('{0}/{1}/test/pi05-oracle/activations.safetensors', github.workspace, env.WORKDIR) || '' }}
+          # DIAGNOSTIC: on linux-arm64 the i8mm+SVE CPU variant (armv8.6_2) that
+          # ggml auto-selects on Graviton/Neoverse diverges from the PyTorch
+          # reference (cos ~0.77). Force a non-SVE/non-i8mm CPU variant to test
+          # whether that variant is the cause (pre-DL native builds didn't run
+          # the SVE path). No effect on other platforms (empty = load all).
+          QVAC_VLA_CPU_VARIANT: ${{ (matrix.platform == 'linux' && matrix.arch == 'arm64') && 'armv8.2' || '' }}
         run: |
           set +e
           # Stream test output AND capture it so we can inspect the TAP summary
