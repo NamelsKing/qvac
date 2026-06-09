@@ -160,6 +160,28 @@ function downloadFile (url, destination, headers, redirects = 5) {
   })
 }
 
+// Retry transient network failures (connection resets, timeouts, 5xx) so a
+// single HuggingFace blip doesn't abort the whole benchmark. 404 and other
+// client errors are re-thrown immediately — the caller handles 404 via its
+// filename-candidate fallback.
+async function downloadFileWithRetry (url, destination, headers, attempts = 4) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await downloadFile(url, destination, headers)
+    } catch (error) {
+      const code = error && error.code
+      const msg = error && error.message ? error.message : String(error)
+      const transient = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) ||
+        (typeof code === 'number' && code >= 500) ||
+        /socket hang up|timed out|network|reset/i.test(msg)
+      if (!transient || attempt >= attempts) throw error
+      const delayMs = 2000 * attempt
+      console.log(`[addon] download attempt ${attempt}/${attempts} failed (${msg}); retrying in ${delayMs}ms`)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+}
+
 async function listRepoGgufFiles (repo, revision, headers) {
   const encodedRepo = String(repo)
     .split('/')
@@ -259,7 +281,7 @@ async function prepareAddonModels (selectedModels, modelsDir, headers, baseDir) 
         const url = `https://huggingface.co/${repo}/resolve/${revision}/${candidateFilename}`
         console.log(`[addon] downloading ${modelId}:${quantization} from ${url}`)
         try {
-          await downloadFile(url, candidateDestination, headers)
+          await downloadFileWithRetry(url, candidateDestination, headers)
           selectedFilename = candidateFilename
           destination = candidateDestination
           break
@@ -284,7 +306,7 @@ async function prepareAddonModels (selectedModels, modelsDir, headers, baseDir) 
           } else {
             console.log(`[addon] downloading ${modelId}:${quantization} from resolved filename ${selectedFilename}`)
           }
-          await downloadFile(url, destination, headers)
+          await downloadFileWithRetry(url, destination, headers)
         }
       }
 
