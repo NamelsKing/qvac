@@ -429,7 +429,7 @@ jobs:
           # reference (cos ~0.77). Force a non-SVE/non-i8mm CPU variant to test
           # whether that variant is the cause (pre-DL native builds didn't run
           # the SVE path). No effect on other platforms (empty = load all).
-          QVAC_VLA_CPU_VARIANT: ${{ (matrix.platform == 'linux' && matrix.arch == 'arm64') && 'armv8.2' || '' }}
+          QVAC_VLA_CPU_VARIANT: ${{ (matrix.platform == 'linux' && matrix.arch == 'arm64') && 'armv8.0' || '' }}
         run: |
           set +e
           # Stream test output AND capture it so we can inspect the TAP summary
