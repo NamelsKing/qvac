@@ -84,6 +84,34 @@ jobs:
           ref="${INPUT_REF:-$REF_NAME}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
+  # Fast fail-first gate (~30s, no prebuild needed): the benchmark shards are
+  # generated from test/integration/_benchmark-matrix.js and not committed, so
+  # the committed integration.auto.cjs and this workflow's test_groups must stay
+  # in lockstep with the matrix. If they have drifted, fail the whole run now
+  # rather than after the mobile prebuild.
+  verify-shards:
+    needs:
+      - context
+      - label-gate
+    if: needs.label-gate.outputs.authorised == 'true' && inputs.run_mobile && !inputs.summarize_only
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout matrix + generated artifacts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        with:
+          ref: ${{ needs.context.outputs.ref }}
+          sparse-checkout: |
+            packages/llm-llamacpp/scripts/generate-benchmark-shards.js
+            packages/llm-llamacpp/test/integration/_benchmark-matrix.js
+            packages/llm-llamacpp/test/mobile/integration.auto.cjs
+            .github/workflows/benchmark-perf-llm-llamacpp.yml
+          sparse-checkout-cone-mode: false
+      - name: Verify benchmark matrix is in sync
+        working-directory: packages/llm-llamacpp
+        run: node scripts/generate-benchmark-shards.js --check
+
   # Records the exact addon version this run benchmarks into a run-meta.json
   # artifact, read from the checked-out package.json. The summarize/comparison
   # step reads the version from this artifact, so a stamped run can never be
@@ -284,6 +312,7 @@ jobs:
       - context
       - prebuild
       - label-gate
+      - verify-shards
     if: needs.label-gate.outputs.authorised == 'true' && inputs.run_mobile && !inputs.summarize_only
     permissions:
       contents: read

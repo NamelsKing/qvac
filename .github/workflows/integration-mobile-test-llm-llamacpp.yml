@@ -127,6 +127,19 @@ jobs:
           path: addon
           fetch-depth: 0
 
+      # The mobile perf benchmark shards (benchmark-perf-*.test.js) are not
+      # committed — they are generated from test/integration/_benchmark-matrix.js.
+      # Regenerate them before the bundle is built so the Device Farm app
+      # contains them, then hard-fail if any are still missing. This makes it
+      # impossible to build the bundle without the shards present. (Runs for
+      # every LLM mobile run; for non-benchmark runs the generated shards are
+      # simply skipped, like any other mobile-only test.)
+      - name: Generate benchmark shards
+        working-directory: addon/packages/llm-llamacpp
+        run: |
+          npm run generate:benchmark-shards
+          node scripts/generate-benchmark-shards.js --assert-shards
+
       - name: Validate mobile tests are up-to-date
         working-directory: addon/packages/llm-llamacpp
         run: npm run test:mobile:validate || true

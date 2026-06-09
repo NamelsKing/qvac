@@ -74,6 +74,20 @@ Sweep → Run workflow**. There is nothing to configure for a normal run — the
 matrix (models, quantizations, reasoning-budget, KV-cache types, repeats) is
 fixed in the scripts; edit those to change what runs.
 
+The **mobile** sweep runs one Device Farm session per
+`(size, quant, KV-cache)` combination. Those combinations live in a single
+source of truth, `test/integration/_benchmark-matrix.js`. The per-combination
+test files (`test/integration/benchmark-perf-*.test.js`) and the workflow's
+mobile `test_groups` are derived from it and the shard files are **not
+committed** — regenerate them with `npm run generate:benchmark-shards` (the CI
+mobile job does this automatically before the Device Farm bundle is built, and
+fails hard if any shard is missing). To change the mobile grid, edit
+`_benchmark-matrix.js`, run `npm run generate:benchmark-shards` and
+`npm run test:mobile:generate`, then update the workflow groups from
+`node scripts/generate-benchmark-shards.js --groups` and commit
+`integration.auto.cjs`. `npm run verify:benchmark-shards` checks they are all in
+sync.
+
 ### Inputs
 
 | Input | Default | Purpose |
