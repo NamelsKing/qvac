@@ -47,7 +47,7 @@ on:
         required: false
         default: 120
       artifact_suffix:
-        description: "Optional prefix inserted into the perf-report artifact name so multiple invocations in one run (e.g. Benchmark batches) don't collide. Default empty keeps the existing name."
+        description: "Optional suffix appended to the perf-report artifact-name stem (before the platform segment) so multiple invocations in one run (e.g. Benchmark batches) don't collide. Default empty keeps the existing name."
         type: string
         required: false
         default: ""
