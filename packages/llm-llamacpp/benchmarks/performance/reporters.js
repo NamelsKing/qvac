@@ -13,6 +13,13 @@ function tsFileStamp () {
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`
 }
 
+// Baseline rows render every config column as 'default'; otherwise show the
+// runtime value (stringified) or blank when unset.
+function cfgCell (isBaseline, value) {
+  if (isBaseline) return 'default'
+  return value != null ? String(value) : ''
+}
+
 function compactPromptErrors (promptResults) {
   if (!Array.isArray(promptResults)) return []
   const out = []
@@ -49,18 +56,16 @@ function toMarkdown (report) {
     lines.push('|---|---|---|---:|---:|---:|---|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|')
     for (const item of model.cases) {
       const runtimeConfig = item.runtimeConfig || {}
-      const quantizationCell = item.isBaseline ? 'default' : (item.quantization ?? '')
-      const rbCell = item.isBaseline ? 'default' : (runtimeConfig['reasoning-budget'] != null ? String(runtimeConfig['reasoning-budget']) : '')
-      const deviceCell = item.isBaseline ? 'default' : (runtimeConfig.device != null ? String(runtimeConfig.device) : '')
-      const ctxSizeCell = item.isBaseline ? 'default' : (runtimeConfig['ctx-size'] != null ? String(runtimeConfig['ctx-size']) : '')
-      const batchSizeCell = item.isBaseline ? 'default' : (runtimeConfig['batch-size'] != null ? String(runtimeConfig['batch-size']) : '')
-      const ubatchSizeCell = item.isBaseline ? 'default' : (runtimeConfig['ubatch-size'] != null ? String(runtimeConfig['ubatch-size']) : '')
-      const flashAttnCell = item.isBaseline
-        ? 'default'
-        : (runtimeConfig['flash-attn'] != null ? String(runtimeConfig['flash-attn']) : '')
-      const threadsCell = item.isBaseline ? 'default' : (runtimeConfig.threads != null ? String(runtimeConfig.threads) : '')
-      const cacheKCell = item.isBaseline ? 'default' : (runtimeConfig['cache-type-k'] != null ? String(runtimeConfig['cache-type-k']) : '')
-      const cacheVCell = item.isBaseline ? 'default' : (runtimeConfig['cache-type-v'] != null ? String(runtimeConfig['cache-type-v']) : '')
+      const quantizationCell = cfgCell(item.isBaseline, item.quantization)
+      const rbCell = cfgCell(item.isBaseline, runtimeConfig['reasoning-budget'])
+      const deviceCell = cfgCell(item.isBaseline, runtimeConfig.device)
+      const ctxSizeCell = cfgCell(item.isBaseline, runtimeConfig['ctx-size'])
+      const batchSizeCell = cfgCell(item.isBaseline, runtimeConfig['batch-size'])
+      const ubatchSizeCell = cfgCell(item.isBaseline, runtimeConfig['ubatch-size'])
+      const flashAttnCell = cfgCell(item.isBaseline, runtimeConfig['flash-attn'])
+      const threadsCell = cfgCell(item.isBaseline, runtimeConfig.threads)
+      const cacheKCell = cfgCell(item.isBaseline, runtimeConfig['cache-type-k'])
+      const cacheVCell = cfgCell(item.isBaseline, runtimeConfig['cache-type-v'])
       const errorCell = item.error && item.error.message
         ? truncateText(item.error.message, 120)
         : ''

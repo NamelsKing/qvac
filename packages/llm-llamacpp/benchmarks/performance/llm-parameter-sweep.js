@@ -91,23 +91,27 @@ async function main () {
     runStartedAt = new Date().toISOString()
   }
 
+  const writeProgressFile = () => {
+    try {
+      fs.writeFileSync(progressFile, JSON.stringify({
+        startedAt: runStartedAt,
+        sweepFingerprint,
+        completedCases: Array.from(completedCases)
+      }, null, 2))
+    } catch (writeError) {
+      if (debugEnabled) {
+        debugLogger.warn(`Failed to write progress: ${writeError.message || String(writeError)}`)
+      }
+    }
+  }
+
   let saveProgressTimeout = null
   const saveProgress = () => {
     if (saveProgressTimeout) {
       clearTimeout(saveProgressTimeout)
     }
     saveProgressTimeout = setTimeout(() => {
-      try {
-        fs.writeFileSync(progressFile, JSON.stringify({
-          startedAt: runStartedAt,
-          sweepFingerprint,
-          completedCases: Array.from(completedCases)
-        }, null, 2))
-      } catch (writeError) {
-        if (debugEnabled) {
-          debugLogger.warn(`Failed to save progress: ${writeError.message || String(writeError)}`)
-        }
-      }
+      writeProgressFile()
       saveProgressTimeout = null
     }, 1000)
   }
@@ -117,17 +121,7 @@ async function main () {
       clearTimeout(saveProgressTimeout)
       saveProgressTimeout = null
     }
-    try {
-      fs.writeFileSync(progressFile, JSON.stringify({
-        startedAt: runStartedAt,
-        sweepFingerprint,
-        completedCases: Array.from(completedCases)
-      }, null, 2))
-    } catch (writeError) {
-      if (debugEnabled) {
-        debugLogger.warn(`Failed to flush progress: ${writeError.message || String(writeError)}`)
-      }
-    }
+    writeProgressFile()
   }
 
   moduleFlushProgress = flushProgress

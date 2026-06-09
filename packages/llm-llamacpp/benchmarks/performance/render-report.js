@@ -257,7 +257,7 @@ function aggregate (rows) {
       tpsStd: stddev(tpsVals),
       ppTps: mean(ppVals),
       ppTpsStd: stddev(ppVals),
-      tokens: real.map(r => r.tokens).find(v => v !== null) ?? null,
+      tokens: real.find(r => r.tokens !== null)?.tokens ?? null,
       sampleCount: real.length
     })
   }
