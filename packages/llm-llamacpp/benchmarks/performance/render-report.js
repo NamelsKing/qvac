@@ -538,6 +538,19 @@ function main () {
     return
   }
 
+  if (args.compareDir && baseline.rows.length === 0) {
+    // A comparison was requested (compare_run_id) but the baseline produced no
+    // benchmark rows (e.g. only run-meta/desktop-meta metadata was downloaded
+    // for it). There is nothing to compare against, so fail rather than render a
+    // delta-less report. This is distinct from a baseline that has rows but none
+    // matching the current devices, which renders a per-device note instead.
+    const msg = `No baseline benchmark data for the requested comparison (${args.compareDir}).\n`
+    if (args.output) fs.writeFileSync(args.output, msg)
+    else process.stdout.write(msg)
+    process.exitCode = 1
+    return
+  }
+
   const md = render(rows, desktopDevice, meta, args.addonVersion, baselineMap, baseline)
   if (args.output) fs.writeFileSync(args.output, md)
   else process.stdout.write(md)
