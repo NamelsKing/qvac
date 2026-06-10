@@ -509,9 +509,14 @@ function main () {
   }
 
   if (rows.length === 0) {
+    // Metadata-only artifacts (run-meta/desktop-meta) are valid JSON but carry no
+    // rows; the workflow's "any JSON present" precheck cannot tell them apart from
+    // real results. Fail so a run that produced no benchmark data never renders as
+    // a green, complete-looking report.
     const msg = 'No benchmark results found.\n'
     if (args.output) fs.writeFileSync(args.output, msg)
     else process.stdout.write(msg)
+    process.exitCode = 1
     return
   }
 
