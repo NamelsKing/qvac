@@ -4,9 +4,9 @@
 // co-installed with the ggml core lib. ggml's default search only looks next to
 // the test binary and the CWD, so without this no backend (not even CPU) is
 // registered, and tests that construct a backend dereference null and abort.
-// CMake injects the absolute ggml lib dir via GGML_BACKEND_DIR; load the modules
-// from there before the first test. No-op in static builds (no modules there,
-// CPU is linked in).
+// CMake injects the absolute ggml lib dir via GGML_BACKEND_DIR; load the
+// modules from there before the first test. No-op in static builds (no modules
+// there, CPU is linked in).
 
 #include <ggml-backend.h>
 #include <gtest/gtest.h>
@@ -24,7 +24,7 @@ extern "C" const char* __lsan_default_suppressions() {
 namespace {
 
 class GgmlBackendEnvironment : public ::testing::Environment {
- public:
+public:
   void SetUp() override {
 #ifdef GGML_BACKEND_DIR
     ggml_backend_load_all_from_path(GGML_BACKEND_DIR);
@@ -37,4 +37,4 @@ class GgmlBackendEnvironment : public ::testing::Environment {
 const ::testing::Environment* const kGgmlBackendEnv =
     ::testing::AddGlobalTestEnvironment(new GgmlBackendEnvironment);
 
-}  // namespace
+} // namespace

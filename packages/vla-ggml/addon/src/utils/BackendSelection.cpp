@@ -40,9 +40,10 @@ void loadBackendsOnce(const std::string& backendsDir) {
       return;
     }
     const std::string filter(variantFilter);
-    QLOG_IF(Priority::WARNING,
-            "QVAC_VLA_CPU_VARIANT set — loading only CPU variants matching '" +
-                filter + "' (plus all non-CPU backends)");
+    QLOG_IF(
+        Priority::WARNING,
+        "QVAC_VLA_CPU_VARIANT set — loading only CPU variants matching '" +
+            filter + "' (plus all non-CPU backends)");
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(p, ec)) {
       const std::string fn = entry.path().filename().string();

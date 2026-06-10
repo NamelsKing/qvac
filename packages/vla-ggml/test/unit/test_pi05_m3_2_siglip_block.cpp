@@ -13,13 +13,12 @@
 #include <string>
 #include <vector>
 
+#include <ggml.h>
+#include <gguf.h>
 #include <gtest/gtest.h>
 
-#include <gguf.h>
-#include <ggml.h>
-#include "pi05_compute.hpp"
-
 #include "model-interface/pi05.hpp"
+#include "pi05_compute.hpp"
 #include "utils/safetensors_lite.hpp"
 
 namespace {

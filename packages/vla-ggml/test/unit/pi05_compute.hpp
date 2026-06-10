@@ -31,4 +31,4 @@ inline ggml_status computeGraphCpu(ggml_cgraph* gf) {
   return status;
 }
 
-}  // namespace pi05_test
+} // namespace pi05_test

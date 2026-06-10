@@ -40,7 +40,8 @@ std::string ggmlLibDir() {
   return GGML_BACKEND_DIR;
 #else
   Dl_info info{};
-  if (dladdr(reinterpret_cast<const void*>(&ggml_backend_load_all), &info) != 0 &&
+  if (dladdr(reinterpret_cast<const void*>(&ggml_backend_load_all), &info) !=
+          0 &&
       info.dli_fname != nullptr) {
     return std::filesystem::path(info.dli_fname).parent_path().string();
   }
@@ -49,8 +50,10 @@ std::string ggmlLibDir() {
 }
 
 class BackendEnvironment : public ::testing::Environment {
- public:
-  void SetUp() override { vla_backend_selection::loadBackendsOnce(ggmlLibDir()); }
+public:
+  void SetUp() override {
+    vla_backend_selection::loadBackendsOnce(ggmlLibDir());
+  }
 };
 
 // Registered at static-init (before main), so gtest_main runs SetUp() ahead of
@@ -58,4 +61,4 @@ class BackendEnvironment : public ::testing::Environment {
 const ::testing::Environment* const kBackendEnvironment =
     ::testing::AddGlobalTestEnvironment(new BackendEnvironment);
 
-}  // namespace
+} // namespace

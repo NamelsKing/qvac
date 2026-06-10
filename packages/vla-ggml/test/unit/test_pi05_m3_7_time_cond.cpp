@@ -11,13 +11,12 @@
 #include <string>
 #include <vector>
 
+#include <ggml.h>
+#include <gguf.h>
 #include <gtest/gtest.h>
 
-#include <gguf.h>
-#include <ggml.h>
-#include "pi05_compute.hpp"
-
 #include "model-interface/pi05.hpp"
+#include "pi05_compute.hpp"
 #include "utils/safetensors_lite.hpp"
 
 namespace {
@@ -98,8 +97,7 @@ void runOne(
 
   struct ggml_cgraph* gf = ggml_new_graph(ctx_g);
   ggml_build_forward_expand(gf, out);
-  ASSERT_EQ(pi05_test::computeGraphCpu(gf),
-            GGML_STATUS_SUCCESS);
+  ASSERT_EQ(pi05_test::computeGraphCpu(gf), GGML_STATUS_SUCCESS);
 
   ASSERT_EQ(ggml_nelements(out), static_cast<int64_t>(COND_DIM));
   const float* got = static_cast<const float*>(out->data);

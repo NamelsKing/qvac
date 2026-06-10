@@ -134,8 +134,8 @@ void ClassificationModel::load() {
   // enabled) qvac-fabric ships per-microarch CPU variants and GPU backends as
   // MODULE .so files loaded at runtime via dlopen. ggml_backend_cpu_init() is
   // not statically linkable here (the symbol lives inside a variant .so), so we
-  // open the modules from <backendsDir>/<BACKENDS_SUBDIR>/ and pick a CPU device
-  // through the generic registry API.
+  // open the modules from <backendsDir>/<BACKENDS_SUBDIR>/ and pick a CPU
+  // device through the generic registry API.
   //
   // backendsDir comes from JS (`path.join(__dirname, 'prebuilds')`, mirroring
   // the llamacpp-llm addon) and BACKENDS_SUBDIR is the compile-time
