@@ -451,8 +451,11 @@ struct GraphBuilder {
 
   struct ggml_tensor*
   applyBn(struct ggml_tensor* x, const std::string& bnPrefix) const {
-    struct ggml_tensor* scaled = ggml_mul(ctx, x, t(bnPrefix + ".scale"));
-    return ggml_add(ctx, scaled, t(bnPrefix + ".shift"));
+    // The BN per-channel scale is folded into the preceding conv's weights at
+    // load time (see the ".scale" loop in load()), so only the shift remains.
+    // This drops one full-tensor multiply per conv from the feature-extractor
+    // graph, which runs once per recognition batch (many times per page).
+    return ggml_add(ctx, x, t(bnPrefix + ".shift"));
   }
 
   struct ggml_tensor* convBnAct(
@@ -1174,6 +1177,40 @@ private:
       }
       ggml_backend_tensor_set(
           dst, scale.data(), 0, scale.size() * sizeof(float));
+
+      // Fold this BN scale into the preceding conv's F16 weights (per output
+      // channel) so applyBn only needs the shift add. The BN named "<P>.1"
+      // belongs to the conv weight "<P>.0.weight"; both are already uploaded.
+      if (prefix.size() >= 2 && prefix.substr(prefix.size() - 2) == ".1") {
+        const std::string convWeightName =
+            prefix.substr(0, prefix.size() - 2) + ".0.weight";
+        auto it = graph.weights.find(convWeightName);
+        if (it != graph.weights.end()) {
+          struct ggml_tensor* wTensor = it->second;
+          if (wTensor->type != GGML_TYPE_F16) {
+            raise("BN fold: expected F16 conv weight for " + convWeightName);
+          }
+          const int64_t oc = wTensor->ne[3];
+          if (static_cast<size_t>(oc) != scale.size()) {
+            raise("BN fold: output-channel mismatch for " + convWeightName);
+          }
+          const int64_t perOc = wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
+          const size_t n = static_cast<size_t>(oc * perOc);
+          std::vector<ggml_fp16_t> wbuf(n);
+          ggml_backend_tensor_get(
+              wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
+          for (int64_t o = 0; o < oc; ++o) {
+            const float s = scale[static_cast<size_t>(o)];
+            for (int64_t i = 0; i < perOc; ++i) {
+              const size_t idx = static_cast<size_t>((o * perOc) + i);
+              wbuf[idx] =
+                  ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
+            }
+          }
+          ggml_backend_tensor_set(
+              wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
+        }
+      }
     }
 
     for (const auto& [name, dst] : graph.weights) {
