@@ -3,7 +3,7 @@
 // Generates the mobile perf benchmark shard files from the single source of
 // truth, test/integration/_benchmark-matrix.js. The shard files are NOT
 // committed (see .gitignore) — they are regenerated wherever the benchmark is
-// built or run, so the matrix is the only place the 2 x 5 x 3 grid is defined.
+// built or run, so the matrix is the only place the 2 x 5 x 7 grid is defined.
 //
 //   node scripts/generate-benchmark-shards.js            # (re)write shards + prune orphans
 //   node scripts/generate-benchmark-shards.js --check     # verify committed artifacts vs matrix
