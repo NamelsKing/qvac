@@ -24,6 +24,7 @@
       "runModelLoadingTest",
       "runMultiGpuTest",
       "runMultiInstanceTest",
+      "runMropeSlidingContextTest",
       "runQwen35Test",
       "runTurboquantTest",
       "runUtf8OutputTest"
@@ -60,6 +61,7 @@
     "funcShardB": [
       "runCacheStateMachineTest",
       "runSlidingContextTest",
+      "runMropeSlidingContextTest",
       "runQwen35Test",
       "runMultiInstanceTest",
       "runImageFruitPlateTest",
