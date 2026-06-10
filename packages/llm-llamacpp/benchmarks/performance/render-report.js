@@ -315,7 +315,15 @@ function coverageLines (rows, desktopDevice, devices) {
   const expected = matrix().map(mobileShardKey)
   const expectedSet = new Set(expected)
   const mobileDevices = devices.filter(d => d !== desktopDevice)
-  if (!mobileDevices.length) return []
+  if (!mobileDevices.length) {
+    return [
+      '## Coverage',
+      '',
+      `**Warning: 0 mobile devices reported.** ${expected.length} shards expected per device. ` +
+      'If mobile was enabled for this run, its data was lost (failed job or dropped artifacts).',
+      ''
+    ]
+  }
 
   const seenByDevice = new Map(mobileDevices.map(d => [d, new Set()]))
   const seenAll = new Set()
@@ -412,6 +420,12 @@ function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseli
     ' `Crashed` = configuration crashed or produced no output.'
   )
   lines.push('')
+  lines.push(
+    'Config labels read `[model] [gpu|cpu] [rb=N] [kv=type]`, where `rb` is the ' +
+    'reasoning budget (-1 leaves the model\'s reasoning channel on, 0 disables it) ' +
+    'and `kv` is the KV-cache type.'
+  )
+  lines.push('')
 
   for (const l of coverageLines(rows, desktopDevice, devices)) lines.push(l)
 
@@ -421,6 +435,10 @@ function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseli
     const items = byDevice.get(device).slice().sort((a, b) => a.config.localeCompare(b.config))
     lines.push(`## ${device}`)
     lines.push('')
+
+    if (comparing && !items.some(r => baselineMap.has(`${r.device}@@${r.config}`))) {
+      lines.push('> No baseline data for this device (baseline ran on different hardware).', '')
+    }
 
     if (comparing) {
       const hdr = hasTokens
