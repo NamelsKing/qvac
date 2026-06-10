@@ -5,7 +5,7 @@ const path = require('bare-path')
 const { round, average, stddev, cartesianProduct } = require('./math')
 const { stripSurroundingQuotes, normalizeArgValue } = require('./utils')
 
-// Focused WB run uses a single ~512-token prompt. Add 'ctx-filling' /
+// The focused sweep uses a single ~512-token prompt. Add 'ctx-filling' /
 // 'span-fill' back to also sweep context-fill and batch-spanning prompts.
 const PROMPT_CASES = ['long']
 const PROMPTS_PER_CASE = 1

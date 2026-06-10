@@ -90,7 +90,7 @@ function loadModelsFromManifest () {
 
 const MODELS = loadModelsFromManifest()
 
-// Parameter sweep (cartesian product). Tuned to the focused WB run:
+// Parameter sweep (cartesian product). Tuned to the focused sweep:
 // only quantization and reasoning-budget vary; every other dimension is
 // pinned to a single value. Edit these arrays to sweep more dimensions.
 const PARAMETER_SWEEP = {
