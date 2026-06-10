@@ -441,8 +441,8 @@ jobs:
         shell: bash
         run: |
           if ! find combined-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
-            echo "No benchmark reports found."
-            exit 0
+            echo "::error::No benchmark reports found for run ${{ inputs.artifact_run_id || github.run_id }}. Nothing to render."
+            exit 1
           fi
           mkdir -p benchmark-artifacts
 
