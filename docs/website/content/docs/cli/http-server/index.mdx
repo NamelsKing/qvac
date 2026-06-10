@@ -16,6 +16,7 @@ At the moment, the HTTP server supports the following QVAC AI capabilities:
 * [Text embeddings](#embeddings) — via `/v1/embeddings`.
 * RAG — via [Files](#files) (`/v1/files`) and [Vector stores](#vector-stores) (`/v1/vector_stores`).
 * [Image generation](#images) — via `/v1/images/generations` and `/v1/images/edits`.
+* [Video generation](#videos) (text-to-video) — via `/v1/videos`.
 * Transcription — via [Audio](#audio) (`/v1/audio/transcriptions`).
 * Text-to-speech — via [Audio](#audio) (`/v1/audio/speech`).
 * Translation (audio-to-English only) — via [Audio](#audio) (`/v1/audio/translations`, Whisper translate task).
@@ -1026,47 +1027,156 @@ Search returns OpenAI-shaped `vector_store.search_results.page` objects. Each ch
 
 ### Videos
 
-OpenAI-compatible **async** text-to-video, backed by the SDK's `video({ mode: "txt2vid" })`. Creating a job returns immediately; the generation runs in the background. Poll for status, then download the bytes.
+OpenAI-compatible **async** text-to-video, backed by the SDK's `video({ mode: "txt2vid" })`. Creating a job returns immediately with `status: "queued"`; the generation runs in the background. Poll for status, then download the bytes. **Text-to-video only** — `input_reference`, `/edits`, `/remix`, `/extensions`, and `/characters` are not implemented (the SDK exposes no underlying modes for them).
 
-Requires an alias whose endpoint category is `video` (SDK addon `sdcpp-video`). Register it in `serve.models` and add a `serve.openai.videos.models` aliasing block so OpenAI SDK clients can use a hard-coded model name. **Text-to-video only** — `input_reference`, `/edits`, `/remix`, `/extensions`, and `/characters` are not implemented.
+#### Loaded model
+
+Register an alias whose endpoint category is `video` using the virtual SDK type **`sdcpp-video`** (it resolves to the `sdcpp-generation` addon with `mode: "video"`). Nested model-source fields (`t5XxlModelSrc`, `vaeModelSrc`, `clipLModelSrc`, …) accept SDK constant names, which the P2P registry resolves to downloadable weights:
+
+```json title="qvac.config.json"
+{
+  "serve": {
+    "models": {
+      "wan-t2v": {
+        "src": "WAN2_1_T2V_1_3B_FP16",
+        "type": "sdcpp-video",
+        "preload": true,
+        "config": {
+          "t5XxlModelSrc": "UMT5_XXL_FP16",
+          "vaeModelSrc": "WAN_2_1_COMFYUI_REPACKAGED_VAE",
+          "offload_to_cpu": true
+        }
+      }
+    }
+  }
+}
+```
+
+Clients select the model by passing the alias key (or its `src` string) in the request `model` field. There is no separate videos aliasing block — to be a drop-in for OpenAI SDK clients (`client.videos.create(...)`, which defaults to `model: "sora-2"`), name the alias after the OpenAI model the client sends (e.g. `"sora-2"`).
 
 #### `POST /v1/videos`
 
-Create a job. Returns the job resource with `status: "queued"`.
-
-#### `GET /v1/videos`
-
-List jobs (`limit` / `order` / `after`). **In-memory only** — a restart clears the list.
-
-#### `GET /v1/videos/:id`
-
-Poll job status (`queued` → `in_progress` → `completed` / `failed`).
-
-#### `GET /v1/videos/:id/content`
-
-Download the generated video. Defaults to `video/mp4` (lazy ffmpeg transcode + cache); `?format=avi` returns the native MJPG-AVI. A `?variant` other than `video` returns `501 unsupported_variant`.
-
-#### `DELETE /v1/videos/:id`
-
-Abort the running job and drop its assets.
-
-**End-to-end create + poll + download:**
+Create a generation job. JSON body only (multipart is not accepted — its only OpenAI use is `input_reference`, which this server rejects). Returns `200` with the `Video` resource at `status: "queued"`.
 
 ```bash
 curl http://localhost:11434/v1/videos \
   -H "Content-Type: application/json" \
-  -d '{"model":"my-video","prompt":"a timelapse of clouds","size":"512x512"}'
+  -d '{
+    "model": "wan-t2v",
+    "prompt": "a colorful bird flapping its wings in a sunny garden",
+    "size": "480x832",
+    "seconds": "2",
+    "fps": 16,
+    "steps": 30,
+    "cfg_scale": 6.0,
+    "flow_shift": 3.0,
+    "negative_prompt": "blurry, low quality, static",
+    "seed": 42
+  }'
+```
 
+##### Request fields
+
+| Field | Description | Required |
+| --- | --- | --- |
+| `model` | Alias declared under `serve.models` (endpoint category `video`). | Yes |
+| `prompt` | Text prompt, 1–32000 characters. | Yes |
+| `size` | `"WIDTHxHEIGHT"` with both dimensions multiples of 8. Accepts any `WxH` in addition to OpenAI's 4-value enum. When omitted, the size is backfilled from the model output. | No |
+| `seconds` | Target duration as a **string** (e.g. `"2"`; OpenAI uses `"4"` / `"8"` / `"12"`). Mapped together with `fps` to the addon's `video_frames` (rounded to the nearest `4k+1`). | No |
+| `fps` | QVAC extension. `0 < fps ≤ 120`, default `16`. | No |
+| `steps` | QVAC extension. Diffusion sampler step count. | No |
+| `seed` | QVAC extension. Random seed; the SDK picks one when omitted. | No |
+| `negative_prompt` | QVAC extension. Negative prompt for the sampler. | No |
+| `cfg_scale` | QVAC extension. Classifier-free guidance scale (Wan range ~5–8). | No |
+| `flow_shift` | QVAC extension. Flow-matching shift; Wan 2.1 T2V needs `3.0` for visible motion. | No |
+
+<Callout type="warn">
+`input_reference` (image-to-video) is rejected with `400 unsupported_param` — the SDK exposes only text-to-video.
+</Callout>
+
+The `Video` resource returned by `POST` (and by `GET /v1/videos/:id`):
+
+```json
+{
+  "id": "video_8f3a…",
+  "object": "video",
+  "model": "wan-t2v",
+  "status": "queued",
+  "progress": 0,
+  "created_at": 1748800000,
+  "completed_at": null,
+  "expires_at": 253402300799,
+  "prompt": "a colorful bird flapping its wings in a sunny garden",
+  "size": "480x832",
+  "seconds": "2",
+  "remixed_from_video_id": null,
+  "error": null
+}
+```
+
+`progress` is a monotonic 0–100 high-water mark. `expires_at` is a far-future sentinel — the resource itself has no TTL; the **rendered bytes** expire in the ephemeral file store (after which `/content` returns `410 video_expired`).
+
+#### `GET /v1/videos/:id`
+
+Poll job status. `status` cycles `queued` → `in_progress` → `completed` / `failed`. Returns the same `Video` resource shape.
+
+```bash
 curl http://localhost:11434/v1/videos/video_abc123
+```
 
+#### `GET /v1/videos/:id/content`
+
+Download the rendered bytes (only valid once `status` is `completed`).
+
+```bash
 curl http://localhost:11434/v1/videos/video_abc123/content --output out.mp4
 ```
 
-#### Deviations from the OpenAI spec
+- **Default container** is `video/mp4` (fragmented MP4) **when `ffmpeg` is on the server's `PATH` at startup**; otherwise it falls back to `video/avi` (the SDK's native MJPG-AVI) and logs a warning once.
+- **`?format=mp4`** forces MP4. With no ffmpeg available this returns `503 transcode_unavailable` — omit `?format` or use `?format=avi`.
+- **`?format=avi`** forces the native MJPG-AVI and never transcodes.
+- The MP4 transcode is **lazy and cached**: the first fetch after completion may take a few seconds; later fetches serve the cached bytes.
+- **`?variant`** other than `video` (e.g. `thumbnail`, `spritesheet`) returns `501 unsupported_variant` — those assets are not rendered.
 
-- `input_reference` is rejected with `400 unsupported_param` (no img2vid in the SDK).
-- `size` accepts any `WxH` (multiples of 8) in addition to OpenAI's 4-value enum.
-- `Content-Type: video/mp4` is produced by a server-side ffmpeg transcode; `?format=avi` returns the native container.
+#### `GET /v1/videos`
+
+List jobs, newest first by default. Cursor pagination via `limit` (default `20`, max `100`), `order` (`asc` / `desc`, default `desc`), and `after`. **In-memory only** — a restart clears the list, and old jobs are dropped once the 256-entry cap is reached.
+
+```json
+{
+  "object": "list",
+  "data": [ { "id": "video_8f3a…", "object": "video", "status": "completed" } ],
+  "first_id": "video_8f3a…",
+  "last_id": "video_8f3a…",
+  "has_more": false
+}
+```
+
+#### `DELETE /v1/videos/:id`
+
+Abort the job (if still `queued` / `in_progress`) and drop its rendered assets.
+
+```json
+{ "id": "video_abc123", "object": "video.deleted", "deleted": true }
+```
+
+#### Errors
+
+| HTTP | `error.code` | When |
+| --- | --- | --- |
+| 400 | `missing_prompt` / `missing_model` | Required field absent. |
+| 400 | `invalid_size` | `size` is not `"WIDTHxHEIGHT"` with multiples of 8. |
+| 400 | `invalid_seconds` | `seconds` is not a positive-integer string. |
+| 400 | `unsupported_param` | `input_reference` sent (no image-to-video). |
+| 400 | `invalid_model_type` | Alias is not a `video` model. |
+| 404 | `video_not_found` | Unknown job id. |
+| 409 | `video_not_ready` | `/content` requested before the job is `completed` (response carries `Retry-After`). |
+| 409 | `video_failed` | Generation failed. |
+| 410 | `video_expired` | Rendered bytes have been evicted from the ephemeral store. |
+| 501 | `unsupported_variant` | `?variant` other than `video`. |
+| 502 | `transcode_failed` | ffmpeg failed or timed out (retry with `?format=avi`). |
+| 503 | `transcode_unavailable` | `?format=mp4` requested but ffmpeg is not on the server's `PATH`. |
+| 503 | `model_not_ready` | Model not loaded yet. |
 
 ### Authentication
 
