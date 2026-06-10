@@ -362,6 +362,7 @@ jobs:
           ref: ${{ needs.context.outputs.ref }}
           sparse-checkout: |
             packages/llm-llamacpp/benchmarks/performance/render-report.js
+            packages/llm-llamacpp/test/integration/_benchmark-matrix.js
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0

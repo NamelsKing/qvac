@@ -34,6 +34,19 @@ function shardFileName (cell) {
   return `benchmark-perf-${slug(cell.size)}-${slug(cell.quant)}-${slug(cell.cache)}.test.js`
 }
 
+// HuggingFace model id for a cell, e.g. {size:'0.8B',quant:'Q4_0'} -> 'qwen3.5-0.8b-Q4_0'.
+// Single source for the id used by the on-device benchmark (modelSpec) and by
+// the report renderer's coverage check, so both agree on shard identity.
+function modelId (size, quant) {
+  return `qwen3.5-${size.toLowerCase()}-${quant}`
+}
+
+// Stable per-shard key matching the renderer's "[<modelId>] ... [kv=<cache>]"
+// row label, so coverage can be reconciled against the matrix.
+function mobileShardKey (cell) {
+  return `${modelId(cell.size, cell.quant)}|${cell.cache}`
+}
+
 // Mirrors toFunctionName in scripts/generate-mobile-integration-tests.js:
 // split the base name on non-alphanumerics, capitalize each part, prefix run.
 function runFunctionName (cell) {
@@ -74,6 +87,8 @@ module.exports = {
   matrix,
   slug,
   shardFileName,
+  modelId,
+  mobileShardKey,
   runFunctionName,
   shardContents,
   workflowBatches

@@ -18,6 +18,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { matrix, mobileShardKey, SIZES, QUANTS, CACHE_TYPES } = require('../../test/integration/_benchmark-matrix.js')
 
 function parseArgs (argv) {
   const a = {
@@ -293,6 +294,68 @@ function metaLine (meta, addonVersion, hasDesktopRows, mobileReps) {
   return parts.join(' · ')
 }
 
+// Shard key for a mobile row, parsed from its "[<modelId>] [<dev>] [rb=..]
+// [kv=<cache>]" label, to match _benchmark-matrix.js mobileShardKey.
+function shardKeyOf (config) {
+  const model = /^\[([^\]]+)\]/.exec(config)
+  const kv = /\[kv=([^\]]+)\]/.exec(config)
+  return model && kv ? `${model[1]}|${kv[1]}` : null
+}
+
+function shardLabel (key) {
+  const [model, kv] = key.split('|')
+  return `${model} [kv=${kv}]`
+}
+
+// Per-device coverage of the mobile shard matrix. Every shard that runs emits
+// at least a Crashed placeholder row, so a shard with no row at all never ran
+// or its data was lost (e.g. a dropped KV-cache batch artifact). Surfacing this
+// keeps a partial run from rendering as a complete-looking report.
+function coverageLines (rows, desktopDevice, devices) {
+  const expected = matrix().map(mobileShardKey)
+  const expectedSet = new Set(expected)
+  const mobileDevices = devices.filter(d => d !== desktopDevice)
+  if (!mobileDevices.length) return []
+
+  const seenByDevice = new Map(mobileDevices.map(d => [d, new Set()]))
+  const seenAll = new Set()
+  for (const r of rows) {
+    if (r.device === desktopDevice) continue
+    const k = shardKeyOf(r.config)
+    if (!k || !expectedSet.has(k) || !seenByDevice.has(r.device)) continue
+    seenByDevice.get(r.device).add(k)
+    seenAll.add(k)
+  }
+
+  const lines = ['## Coverage', '']
+  lines.push(
+    `Mobile matrix: ${expected.length} shards expected per device ` +
+    `(${SIZES.length} sizes x ${QUANTS.length} quants x ${CACHE_TYPES.length} KV-cache types). ` +
+    `${mobileDevices.length} device(s) reported.`
+  )
+  lines.push('')
+  lines.push('| Device | Shards reported |')
+  lines.push('| --- | ---: |')
+  for (const d of mobileDevices) lines.push(`| ${d} | ${seenByDevice.get(d).size} / ${expected.length} |`)
+  lines.push('')
+
+  const missingEverywhere = expected.filter(k => !seenAll.has(k))
+  if (missingEverywhere.length) {
+    lines.push(`**${missingEverywhere.length} shard(s) produced no data on any device** (likely a dropped batch):`)
+    for (const k of missingEverywhere) lines.push(`- ${shardLabel(k)}`)
+    lines.push('')
+  }
+  for (const d of mobileDevices) {
+    const miss = expected.filter(k => seenAll.has(k) && !seenByDevice.get(d).has(k))
+    if (miss.length) {
+      lines.push(`**${d}** is missing ${miss.length} shard(s) other devices reported:`)
+      for (const k of miss) lines.push(`- ${shardLabel(k)}`)
+      lines.push('')
+    }
+  }
+  return lines
+}
+
 function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseline) {
   const byDevice = new Map()
   for (const r of rows) {
@@ -349,6 +412,8 @@ function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseli
     ' `Crashed` = configuration crashed or produced no output.'
   )
   lines.push('')
+
+  for (const l of coverageLines(rows, desktopDevice, devices)) lines.push(l)
 
   const hasTokens = rows.some(r => r.tokens !== null)
 
