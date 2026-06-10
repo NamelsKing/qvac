@@ -21,11 +21,22 @@ const isMobile = platform === 'ios' || platform === 'android'
 // chunks JSON into [PERF_REPORT_START]/[PERF_CHUNK] markers — the exact
 // format scripts/perf-report/extract-from-log.js already understands.
 // ---------------------------------------------------------------------------
+// Inject bare-subprocess so performance-reporter.js's _detectGpu() can shell
+// out to nvidia-smi / vulkaninfo / system_profiler on desktop runners.
+// Resolving from this caller file works (it lives next to the addon's
+// node_modules); resolving from inside scripts/test-utils/ does not because
+// require('child_process') throws under Bare. Without this, device.gpu stays
+// null and the perf report shows "N/A" for the GPU. Mirrors the LLM addon's
+// _perf-helper.js. Mobile doesn't need it — the inline fallback below leaves
+// gpu unset on Device Farm where the probes wouldn't work anyway.
+let _subprocess = null
+try { _subprocess = require('bare-subprocess') } catch (_) {}
+
 let createPerformanceReporter
 const _scriptBase = path.join('..', '..', '..', '..', 'scripts', 'test-utils')
 try {
   const perfReporterMod = require(path.join(_scriptBase, 'performance-reporter'))
-  perfReporterMod.configure({ fs, path, process, os })
+  perfReporterMod.configure({ fs, path, process, os, subprocess: _subprocess })
   createPerformanceReporter = perfReporterMod.createPerformanceReporter
 } catch (_) {
   createPerformanceReporter = function (opts) {
