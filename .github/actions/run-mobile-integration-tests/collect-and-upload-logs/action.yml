@@ -3,13 +3,11 @@ description: |
   Phase 6 of the mobile integration test pipeline.
 
   Always runs, even on monitor failure (so crashes get full forensic data).
-  Refreshes AWS credentials, downloads CUSTOMER_ARTIFACT + LOG artifacts
-  from each Device Farm job, extracts bare_console.log from
-  Customer_Artifacts.zip, parses any [PERF_REPORT_START]/END marker block
-  out of Logcat/console logs, and uploads three artifact bundles:
+  Refreshes AWS credentials, downloads only the essential artifacts from
+  Device Farm (Customer_Artifacts.zip + Logcat), extracts bare_console.log,
+  test-results.json, logcat_full.txt, and perf markers, then uploads:
     - console-logs-<addon>-<platform>
     - perf-report-<addon>-<platform> (only when enables-perf=true)
-    - devicefarm-logs-<addon>-<platform>
 
 inputs:
   platform:
@@ -76,6 +74,10 @@ runs:
           [ -n "$_arn" ] && RUN_ARNS+=("$_arn")
         done < <(echo "$RUN_ARNS_JSON" | jq -r '.[]')
 
+        # QVAC-19368: only download artifacts we actually use — Customer_Artifacts
+        # (contains bare_console.log, test-results.json, logcat_full.txt, perf
+        # data) and Logcat (C++ logs). Everything else (screenshots, XML,
+        # videos, install logs) is skipped to cut download time + upload size.
         download_artifact() {
           local dest_dir="$1" art_json
           art_json=$(echo "$2" | base64 -d)
@@ -84,9 +86,11 @@ runs:
           name=$(echo "$art_json" | jq -r '.name')
           ext=$(echo "$art_json" | jq -r '.extension')
           [ -z "$url" ] || [ "$url" = "null" ] && return
-          if [ "$PLATFORM" = "Android" ] && [ "$ext" = "mp4" ]; then
-            return
-          fi
+          # Only download Customer_Artifacts.zip and Logcat files.
+          case "$name" in
+            *Customer_Artifacts*|*Logcat*|*logcat*) ;;
+            *) return ;;
+          esac
           local safe_name
           safe_name=$(echo "$name" | tr ' /' '__' | tr -cd '[:alnum:]_.-')
           curl -fsSL --max-time 300 -o "${dest_dir}/${safe_name}.${ext}" "$url" || true
@@ -121,10 +125,6 @@ runs:
               local suite_name safe_suite suite_dir
               suite_name=$(echo "$suites_json" | jq -r --arg arn "$suite_arn" '.suites[] | select(.arn == $arn) | .name // "unknown"')
 
-              # Setup Test and Teardown Test suites only contain Device Farm
-              # framework bookkeeping (screenshot of home screen, install logs).
-              # Skipping them saves 2 list-artifacts API calls + downloads per
-              # device-job — significant when multiplied across many shards.
               case "$suite_name" in
                 "Setup Test"|"Teardown Test") continue ;;
               esac
@@ -133,23 +133,19 @@ runs:
               suite_dir="${job_dir}/${safe_suite}"
               mkdir -p "$suite_dir"
 
+              # FILE artifacts: only Customer_Artifacts.zip matters here.
               local artifacts
               artifacts=$(aws devicefarm list-artifacts --arn "$suite_arn" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
               for art in $(echo "$artifacts" | jq -r '.artifacts[] | @base64'); do
                 download_artifact "$suite_dir" "$art"
               done
 
+              # LOG artifacts: only Logcat matters here.
               local artifacts_log
               artifacts_log=$(aws devicefarm list-artifacts --arn "$suite_arn" --type LOG --output json 2>/dev/null || echo '{"artifacts":[]}')
               for art in $(echo "$artifacts_log" | jq -r '.artifacts[] | @base64'); do
                 download_artifact "$suite_dir" "$art"
               done
-            done
-
-            local job_artifacts
-            job_artifacts=$(aws devicefarm list-artifacts --arn "$job_arn" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
-            for art in $(echo "$job_artifacts" | jq -r '.artifacts[] | @base64'); do
-              download_artifact "$job_dir" "$art"
             done
           done
         }
@@ -386,11 +382,7 @@ runs:
         retention-days: 30
         if-no-files-found: ignore
 
-    - name: Upload full Device Farm logs
-      if: always() && inputs.run-arns != '[]' && inputs.run-arns != ''
-      uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
-      with:
-        name: devicefarm-logs-${{ steps.artifact_suffix.outputs.suffix }}-${{ inputs.platform }}
-        path: devicefarm-logs/
-        retention-days: 30
-        if-no-files-found: ignore
+    # QVAC-19368: removed the full devicefarm-logs upload (screenshots, XML,
+    # install logs, etc.) per team agreement — only console-logs and
+    # perf-report artifacts are needed. The raw Device Farm artifacts can
+    # still be accessed via the AWS console links in the monitor output.
