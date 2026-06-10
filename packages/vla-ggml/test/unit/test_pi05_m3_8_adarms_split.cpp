@@ -113,14 +113,12 @@ TEST(Pi05M3_8, AdaRmsSplitMatchesPytorch) {
   struct ggml_context* ctx_g = ggml_init(gp);
   ASSERT_NE(ctx_g, nullptr);
 
-  struct ggml_tensor* cond =
-      ggml_new_tensor_1d(ctx_g, GGML_TYPE_F32, COND_DIM);
-  std::memcpy(cond->data, cond_data.data(),
-              COND_DIM * sizeof(float));
+  struct ggml_tensor* cond = ggml_new_tensor_1d(ctx_g, GGML_TYPE_F32, COND_DIM);
+  std::memcpy(cond->data, cond_data.data(), COND_DIM * sizeof(float));
 
   using qvac_lib_infer_vla_ggml::pi05BuildAdarmsSplitGraph;
-  auto split = pi05BuildAdarmsSplitGraph(
-      ctx_g, cond, ada_w, ada_b, EXPERT_HIDDEN);
+  auto split =
+      pi05BuildAdarmsSplitGraph(ctx_g, cond, ada_w, ada_b, EXPERT_HIDDEN);
   ASSERT_NE(split.scale, nullptr);
   ASSERT_NE(split.shift, nullptr);
   ASSERT_NE(split.gate, nullptr);
@@ -159,10 +157,8 @@ TEST(Pi05M3_8, AdaRmsSplitMatchesPytorch) {
       }
     }
     std::cerr << "[M3.8] " << p.name << ": cos=" << cos
-              << " max_abs_diff=" << diff
-              << " max_abs_expected=" << max_abs
-              << " rel_max=" << (diff / std::max(max_abs, 1e-9f))
-              << "\n";
+              << " max_abs_diff=" << diff << " max_abs_expected=" << max_abs
+              << " rel_max=" << (diff / std::max(max_abs, 1e-9f)) << "\n";
     EXPECT_GT(cos, 0.99999f) << p.name;
     EXPECT_LT(diff, 5e-3f) << p.name;
   }

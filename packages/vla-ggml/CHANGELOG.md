@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.2] - 2026-06-06
+
+- Pinned to the Fabric revision used by the M-RoPE/iM-RoPE sliding-context work.
+
+## Pull Requests
+
+- [#2438](https://github.com/tetherto/qvac/pull/2438) - feat[notask]: add M-RoPE sliding context support
+
+## [0.3.1] - 2026-06-02
+
+- Bumped the `qvac-lib-inference-addon-cpp` vcpkg dependency to `1.2.1`.
+
 ## [0.3.0]
 
 - feat: π₀.₅ support behind GGUF `general.architecture=pi05`. The addon

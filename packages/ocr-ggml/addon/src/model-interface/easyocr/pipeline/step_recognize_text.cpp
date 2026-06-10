@@ -663,18 +663,22 @@ StepRecognizeText::StepRecognizeText(
     const std::string& gguf_path, std::span<const std::string> langList,
     Config config)
     : config_(std::move(config)), backendsHandle_(config_.backendsDir) {
-  ggml_backend_dev_t cpuDev =
-      ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-  backend_ = cpuDev ? ggml_backend_dev_init(cpuDev, nullptr) : nullptr;
+  ggml_backend_dev_t dev =
+      (config_.backendDevice != nullptr)
+          ? config_.backendDevice
+          : ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+  backend_ = dev ? ggml_backend_dev_init(dev, nullptr) : nullptr;
   if (backend_ == nullptr) {
-    throw std::runtime_error(
-        "StepRecognizeText: failed to init CPU ggml backend");
+    throw std::runtime_error("StepRecognizeText: failed to init ggml backend");
   }
-  if (config_.nThreads >= 0) {
+  // Thread-count tuning only applies to the CPU backend; GPU backends (Vulkan)
+  // ignore it, so gate the call on the selected device being CPU.
+  const bool isCpu = ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU;
+  if (isCpu && config_.nThreads >= 0) {
     const int effective = (config_.nThreads == 0)
                               ? defaultPhysicalThreadCount()
                               : config_.nThreads;
-    ggml_backend_reg_t cpuReg = ggml_backend_dev_backend_reg(cpuDev);
+    ggml_backend_reg_t cpuReg = ggml_backend_dev_backend_reg(dev);
     auto* fn_set_n_threads =
         cpuReg ? (ggml_backend_set_n_threads_t)ggml_backend_reg_get_proc_address(
                      cpuReg, "ggml_backend_set_n_threads")
@@ -1100,7 +1104,20 @@ void StepRecognizeText::ensureRecognizerGraph(
     return;
   }
 
-  destroyRecognizerGraph();
+  // Free only the size-specific graph context; deliberately KEEP
+  // recognizerGraphCache_.gallocr so its backing backend buffer is reused (and
+  // resized in place by ggml_gallocr_alloc_graph below) across region sizes.
+  // EasyOCR rebuilds this graph once per distinct text-region width, so
+  // freeing+reallocating the gallocr buffer every time is the heaviest source
+  // of backend-heap churn — which fragments the Metal heap and can trigger
+  // out-of-memory command-buffer failures on memory-constrained devices.
+  if (recognizerGraphCache_.gctx != nullptr) {
+    ggml_free(recognizerGraphCache_.gctx);
+    recognizerGraphCache_.gctx = nullptr;
+  }
+  recognizerGraphCache_.graph = nullptr;
+  recognizerGraphCache_.input = nullptr;
+  recognizerGraphCache_.output = nullptr;
 
   const size_t graphCtxSize = (ggml_tensor_overhead() * graphSize) +
                               ggml_graph_overhead_custom(graphSize, false);
@@ -1126,8 +1143,10 @@ void StepRecognizeText::ensureRecognizerGraph(
   ggml_build_forward_expand(
       recognizerGraphCache_.graph, recognizerGraphCache_.output);
 
-  recognizerGraphCache_.gallocr =
-      ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+  if (recognizerGraphCache_.gallocr == nullptr) {
+    recognizerGraphCache_.gallocr =
+        ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+  }
   if (!ggml_gallocr_alloc_graph(
           recognizerGraphCache_.gallocr, recognizerGraphCache_.graph)) {
     destroyRecognizerGraph();

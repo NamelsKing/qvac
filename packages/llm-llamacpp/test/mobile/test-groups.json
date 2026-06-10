@@ -24,9 +24,20 @@
       "runModelLoadingTest",
       "runMultiGpuTest",
       "runMultiInstanceTest",
+      "runMropeSlidingContextTest",
       "runQwen35Test",
       "runTurboquantTest",
       "runUtf8OutputTest"
+    ],
+    "vlmPerfGemma4": [
+      "runGemma4ImageElephantPerfTest",
+      "runGemma4ImageFruitPlatePerfTest",
+      "runGemma4ImageHighResAuroraPerfTest"
+    ],
+    "vlmPerfQwen35": [
+      "runQwen35ImageElephantPerfTest",
+      "runQwen35ImageFruitPlatePerfTest",
+      "runQwen35ImageHighResAuroraPerfTest"
     ]
   },
   "android": {
@@ -37,6 +48,7 @@
       "runFinetuningPauseResumeTest",
       "runGenerationParamsTest",
       "runGrammarTest",
+      "runMropeSlidingContextTest",
       "runMultiInstanceTest",
       "runQuantizedKvcacheTest",
       "runQwen35Test",
@@ -59,6 +71,16 @@
       "runImageElephantTest",
       "runImageFruitPlateTest",
       "runImageHighResAuroraTest"
+    ],
+    "vlmPerfGemma4": [
+      "runGemma4ImageElephantPerfTest",
+      "runGemma4ImageFruitPlatePerfTest",
+      "runGemma4ImageHighResAuroraPerfTest"
+    ],
+    "vlmPerfQwen35": [
+      "runQwen35ImageElephantPerfTest",
+      "runQwen35ImageFruitPlatePerfTest",
+      "runQwen35ImageHighResAuroraPerfTest"
     ]
   }
 }

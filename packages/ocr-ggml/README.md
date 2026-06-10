@@ -107,6 +107,8 @@ bare examples/quickstart.js \
 | `params.recognizerBatchSize` | `number` | | `32` | recognizer batch size (`easyocr` only) |
 | `params.nThreads` | `number` | | `0` (auto) | CPU thread count for GGML; `<0` leaves the GGML default |
 | `params.backendsDir` | `string` | | `<package>/prebuilds` | directory holding `libggml-*.so` backend shared libs |
+| `params.backendDevice` | `'cpu'` \| `'vulkan'` \| `'metal'` | | `'cpu'` | ggml backend device. `'vulkan'` (Linux/Windows/Android) and `'metal'` (Apple) opt in to GPU inference with transparent CPU fallback — see [Backend device](#backend-device-cpu--vulkan--metal) |
+| `params.gpuDevice` | `number` | | _prefer discrete_ | 0-based index into the matching GPU/iGPU devices for `'vulkan'`/`'metal'`; out-of-range → CPU fallback — see [Selecting a specific GPU](#selecting-a-specific-gpu-gpudevice) |
 | `opts.stats` | `boolean` | | `false` | emit timing stats on `finish` |
 | `logger` | `Object` | | `null` | optional `{ info, warn, error, debug }` — receives C++ log lines |
 
@@ -117,7 +119,112 @@ bare examples/quickstart.js \
 - `unload(): Promise<void>` — frees the addon (destroys ggml contexts + backends)
 - `destroy(): Promise<void>` — marks the instance as destroyed (no further use)
 - `getState(): InferenceClientState`
+- `getBackendInfo(): BackendInfo | null` — backend device resolved at `load()` (`{ requested, backendDevice, backendName, deviceIndex, backendDescription, fallbackReason }`); `null` before `load()` / after `unload()`. `deviceIndex` is the ggml device index of the selected device (or `-1` on CPU); `backendDescription` is the human-readable model (e.g. `'NVIDIA GeForce RTX 4090'`, `'Apple M3'`)
 - `OcrGgml.getModelKey(): string` — `"ocr-ggml"`, used by the inference manager
+
+### Backend device (CPU / Vulkan / Metal)
+
+By default inference runs on the **CPU** ggml backend, which is always
+available. Set `params.backendDevice` to `'vulkan'` (Linux/Windows/Android) or
+`'metal'` (Apple) to opt in to GPU inference:
+
+```js
+const ocr = new OcrGgml({
+  params: {
+    pathDetector: '/abs/path/craft_mlt_25k.gguf',
+    pathRecognizer: '/abs/path/english_g2.gguf',
+    langList: ['en'],
+    backendDevice: 'metal'   // 'cpu' (default) | 'vulkan' | 'metal'
+  }
+})
+await ocr.load()
+console.log(ocr.getBackendInfo())
+// Vulkan available → { requested: 'vulkan', backendDevice: 'GPU', backendName: 'Vulkan0', deviceIndex: 1, backendDescription: 'NVIDIA GeForce RTX 4090', fallbackReason: '' }
+// no Vulkan device → { requested: 'vulkan', backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: 'Vulkan backend requested but no Vulkan-capable GPU device was found; falling back to CPU' }
+// Metal available  → { requested: 'metal',  backendDevice: 'GPU', backendName: 'MTL0', deviceIndex: 1, backendDescription: 'Apple M3 Ultra', fallbackReason: '' }  // device name; 'MTL1'… on a multi-GPU host
+// no Metal device  → { requested: 'metal',  backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1, backendDescription: '…', fallbackReason: 'Metal backend requested but no Metal-capable GPU device was found; falling back to CPU' }
+```
+
+Behaviour and expectations:
+
+- **Transparent CPU fallback.** When `'vulkan'` / `'metal'` is requested but no
+  matching GPU device is registered, the pipeline falls back to CPU and
+  records a non-empty `fallbackReason` (also reflected by the numeric
+  `backendIsGpu` stat). It never silently does the wrong thing.
+- **Required backend libs.** Vulkan execution needs the `libggml-vulkan`
+  backend shared library (`libggml-vulkan.so` / `.dll` / `.dylib`) present in
+  `backendsDir` (default `<package>/prebuilds/<target>/`), plus a working
+  Vulkan driver/ICD and a Vulkan-capable GPU on the host. **Metal** is compiled
+  into the addon (no extra shared library), and is available whenever ggml was
+  built with the qvac-fabric `gpu-backends` feature (the default on Apple).
+  These GPU backends are only produced on platforms/feature sets where the
+  upstream ggml port builds them; on other hosts the request quietly falls back
+  to CPU.
+- **DocTR recognizer.** Only the MobileNetV3 feature-extractor graph runs on
+  the selected ggml device; the recognizer's downstream LSTM + linear
+  classifier always run on CPU (plain C++, no ggml graph), regardless of
+  `backendDevice`.
+- **Threads.** `nThreads` only affects the CPU backend; it is ignored when a
+  Vulkan or Metal device is selected.
+- **Performance guidance (Metal).** The win depends on the detector. The
+  EasyOCR pipeline's CRAFT detector is dense-convolution and benefits strongly
+  from the GPU (≈4.5× faster on Metal on an Apple M3 Ultra vs CPU). The DocTR
+  detector is MobileNetV3 (depthwise-separable convolutions) — a low-arithmetic
+  -intensity, GPU-unfriendly workload that runs *slower* on Metal than on CPU;
+  output is identical either way. Recommended default: **EasyOCR → `'metal'`,
+  DocTR → `'cpu'`** on Apple. Since `backendDevice` is per-instance, you can mix
+  both. (Numbers are workload/hardware dependent — measure for your case.)
+
+### Selecting a specific GPU (`gpuDevice`)
+
+On a host with more than one GPU (e.g. a discrete GPU plus an integrated GPU,
+or two discrete GPUs) the backend resolves which device to use as follows:
+
+- **Default (no `gpuDevice`): prefer discrete.** Selection enumerates every
+  GPU/iGPU device that matches the requested backend (Vulkan or Metal) and
+  picks the first **discrete** GPU (`GGML_BACKEND_DEVICE_TYPE_GPU`); if none is
+  discrete it uses the first **integrated** GPU. This avoids accidentally
+  pinning inference to a weaker iGPU on laptops/APUs.
+- **Explicit `gpuDevice: N`.** Pass a 0-based index to pin a specific device.
+  The index counts only the **matching** devices, in ggml enumeration order
+  (so `gpuDevice: 0` is the first matching device, `gpuDevice: 1` the second,
+  …). An **out-of-range** index transparently falls back to CPU and records a
+  `fallbackReason` naming the requested index and how many matching devices
+  were found. The resolved ggml device index is reported as
+  `getBackendInfo().deviceIndex` (and `-1` on CPU).
+
+```js
+const ocr = new OcrGgml({
+  params: {
+    pathDetector: '/abs/path/craft_mlt_25k.gguf',
+    pathRecognizer: '/abs/path/english_g2.gguf',
+    langList: ['en'],
+    backendDevice: 'vulkan',
+    gpuDevice: 1            // pin the 2nd matching Vulkan device
+  }
+})
+await ocr.load()
+console.log(ocr.getBackendInfo())
+// → { requested: 'vulkan', backendDevice: 'GPU', backendName: 'Vulkan1',
+//     deviceIndex: 1, backendDescription: 'NVIDIA GeForce RTX 4090', fallbackReason: '' }
+// out-of-range gpuDevice (e.g. 99) →
+//   { requested: 'vulkan', backendDevice: 'CPU', backendName: 'CPU', deviceIndex: -1,
+//     backendDescription: '…',
+//     fallbackReason: 'Vulkan backend requested with gpuDevice index 99 but only N matching device(s) were found; falling back to CPU' }
+```
+
+`gpuDevice` applies to **both** Vulkan and Metal (the prefer-discrete default
+and the index selection share one code path).
+
+- **Interim env lever (`GGML_VK_VISIBLE_DEVICES`).** For pinning or reordering
+  Vulkan devices *without code*, ggml's Vulkan backend honours the
+  `GGML_VK_VISIBLE_DEVICES` environment variable — a comma-separated list of
+  device indices (e.g. `GGML_VK_VISIBLE_DEVICES=1,0`) that restricts and
+  reorders the Vulkan devices ggml exposes. Because this is applied by ggml
+  *before* the addon enumerates devices, it composes with `gpuDevice`: the
+  addon's index counts the (already filtered/reordered) visible devices. Use it
+  as an interim lever (e.g. in CI or a launcher script) when you cannot pass
+  `gpuDevice` through the API. It does not affect Metal.
 
 ### `run(input)` shape
 
@@ -151,7 +258,8 @@ This is byte-for-byte the same shape `@qvac/ocr-onnx` returns.
   totalTime: number,        // seconds
   detectionTime: number,    // seconds (CRAFT inference)
   recognitionTime: number,  // seconds (CRNN inference)
-  numBoxes: number          // total boxes (aligned + unaligned)
+  numBoxes: number,         // total boxes (aligned + unaligned)
+  backendIsGpu: number      // 1 if inference ran on a GPU (Vulkan/Metal) device, else 0
 }
 ```
 
@@ -272,6 +380,7 @@ case only when the corresponding GGUFs are present on disk:
 | `OCR_GGML_DOCTR_DETECTOR` | Doctr | Doctr case |
 | `OCR_GGML_DOCTR_RECOGNIZER` | Doctr | Doctr case |
 | `OCR_GGML_IMAGE` | — | overrides the default sample image |
+| `OCR_GGML_BACKEND` | — | manual ggml backend override for the whole suite: `cpu` or `vulkan` (otherwise auto-detected, see below) |
 
 CI sets these automatically; locally you can:
 
@@ -279,6 +388,80 @@ CI sets these automatically; locally you can:
 OCR_GGML_DETECTOR=$PWD/models/craft_mlt_25k.gguf \
 OCR_GGML_RECOGNIZER=$PWD/models/latin_g2.gguf \
 npm run test:integration
+```
+
+### Running the suite on Vulkan (GPU)
+
+The harness **auto-detects** the backend. When the package ships a
+`ggml-vulkan` backend lib in `prebuilds/` (as the merged desktop CI prebuilds
+do), the whole integration suite — every EasyOCR + DocTR case, with the same
+expected-text / quality assertions as CPU — automatically runs through the
+ggml Vulkan backend. This means the existing desktop `test-<platform>-<arch>`
+integration job exercises Vulkan on the Vulkan-capable GPU runner (e.g.
+`qvac-ubuntu2404-x64-gpu`) with no separate CI job.
+
+On a host without a Vulkan-capable GPU (or without the `ggml-vulkan` backend
+lib — e.g. local dev with unmerged prebuilds), the suite stays on CPU: when no
+lib is present it never requests Vulkan, and when the lib is present but no GPU
+is available the request transparently falls back to CPU. Either way the suite
+still passes, and the recorded `execution_provider` reflects the backend
+actually used (driven by the `backendIsGpu` stat), not the request.
+
+`OCR_GGML_BACKEND` remains a manual override that takes precedence over
+auto-detection — force the GPU path (or force CPU) with:
+
+```bash
+OCR_GGML_BACKEND=vulkan \
+OCR_GGML_DETECTOR=$PWD/models/craft_mlt_25k.gguf \
+OCR_GGML_RECOGNIZER=$PWD/models/latin_g2.gguf \
+npm run test:integration
+```
+
+### Android Vulkan (mobile suite)
+
+Android is the primary mobile Vulkan target, and the `android-arm64` prebuild
+ships the Vulkan backend lib (`libqvac-ggml-vulkan.so`). The mobile suite runs
+on AWS Device Farm (see `test/mobile/test-groups.json`), where the harness
+defaults to **CPU** — so a dedicated test,
+[`test/integration/android-vulkan.test.js`](./test/integration/android-vulkan.test.js)
+(`runAndroidVulkanTest`, in the `android` → `regularB` shard), explicitly
+requests `backendDevice: 'vulkan'`. It asserts the addon either runs on a
+Vulkan device or reports an explicit CPU fallback, **and** — whichever backend
+is resolved — that the OCR output is correct (an accuracy gate, not just an
+"it executed" check). The test runs only on Android and is a clean skip on
+desktop and iOS (iOS has no Vulkan).
+
+> **Adreno caveat.** Adreno Vulkan is numerically broken (cos-sim ~0.73 vs
+> reference on Adreno 830 / Galaxy S25, while Mali / Metal / NVIDIA sit above
+> 0.999 — see `vla-ggml`). `OcrBackendSelection` therefore **auto-skips Adreno
+> GPUs for Vulkan** and falls back to CPU (an explicit `gpuDevice` index still
+> overrides this to force an Adreno device on purpose). The accuracy gate above
+> is the backstop that catches a numerically-broken Vulkan device that slips
+> through.
+
+### CPU-vs-Vulkan benchmark
+
+The `Benchmark Performance (OCR-GGML)` workflow reuses the integration suites,
+which already record **both** a Vulkan (`[GPU]`) and a forced-CPU (`[CPU]`) pass
+for each test on a GPU host (`runOcrComparison` / `runDoctrComparison`, tagged
+via the `backendIsGpu` stat). The shared perf-report aggregator
+(`scripts/perf-report/aggregate.js`) pairs those rows per device + test and
+renders a **"CPU → Vulkan Speedup"** section (markdown + HTML) showing
+`speedup = CPU mean / Vulkan mean` for total / detection / recognition time.
+The section only appears when a test ran on both backends, so non-GPU runs are
+unaffected.
+
+On mobile, Android also attempts Vulkan (see below); Mali devices (e.g. Pixel)
+fill the GPU column, while Adreno devices auto-fall-back to CPU. To compare
+**output quality** (not just speed) across backends, the Python quality
+benchmark takes a `--backend` flag:
+
+```bash
+python benchmarks/quality_eval/benchmark_100.py \
+  --pipeline easyocr \
+  --detector models/craft_mlt_25k.gguf \
+  --recognizer models/latin_g2.gguf \
+  --backend vulkan   # cpu (default) | vulkan — falls back to CPU when unavailable
 ```
 
 ## Repository layout

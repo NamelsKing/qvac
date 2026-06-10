@@ -31,6 +31,8 @@ import {
   FLUX_2_KLEIN_4B_VAE,
   QWEN3_4B_Q4_K_M,
   WAN2_1_T2V_1_3B_FP16,
+  WAN2_1_I2V_14B_Q4_K_M,
+  CLIP_VISION_H,
   UMT5_XXL_FP16,
   WAN_2_1_COMFYUI_REPACKAGED_VAE,
   SD_V2_1_1B_Q8_0,
@@ -369,6 +371,23 @@ resources.define("video", {
   },
 });
 
+resources.define("video-img2vid", {
+  constant: WAN2_1_I2V_14B_Q4_K_M,
+  type: "diffusion",
+  config: {
+    mode: "video",
+    device: "gpu",
+    threads: 4,
+    t5XxlModelSrc: UMT5_XXL_FP16,
+    vaeModelSrc: WAN_2_1_COMFYUI_REPACKAGED_VAE,
+    clipVisionModelSrc: CLIP_VISION_H,
+    diffusion_fa: true,
+    offload_to_cpu: true,
+    vae_on_cpu: true,
+    vae_tiling: true,
+  },
+});
+
 // Isolated from "diffusion" so ESRGAN load failures don't affect the rest of the suite.
 resources.define("diffusion-esrgan", {
   constant: SD_V2_1_1B_Q8_0,
@@ -409,22 +428,27 @@ resources.define("upscaler-cpu", {
   },
 });
 
-export async function bootstrap(filteredTests?: TestDefinition[]) {
-  // Point the SDK at the committed e2e fixture unless the developer
-  // already provided their own qvac.config.json / QVAC_CONFIG_PATH.
-  // This exercises the registryDownloadMaxRetries + registryStreamTimeoutMs
-  // propagation end-to-end (see tests/config-tests.ts).
+// Exercises registryDownloadMaxRetries + registryStreamTimeoutMs end-to-end (see config-tests.ts).
+function ensureDesktopE2EConfig() {
   if (!process.env["QVAC_CONFIG_PATH"]) {
     process.env["QVAC_CONFIG_PATH"] = path.resolve(
       process.cwd(),
       "fixtures/qvac.config.e2e.json",
     );
+    console.log(`📦 Desktop e2e config set to ${process.env["QVAC_CONFIG_PATH"]}`);
+  } else {
+    console.log(`📦 Desktop e2e config: QVAC_CONFIG_PATH already set to ${process.env["QVAC_CONFIG_PATH"]}, skipping`);
   }
+}
+
+export async function bootstrap(filteredTests?: TestDefinition[]) {
+  ensureDesktopE2EConfig();
+
   // `filteredTests` (when present) is the producer's post-filter test list
   // delivered via register-ack; absence keeps the legacy "warm everything" path.
   const allowedDeps = filteredTests ? collectTestDeps(filteredTests) : undefined;
   await resources.downloadAllOnce(console.log, { allowedDeps });
-};
+}
 
 export const executor = createExecutor({
   handlers: [
@@ -432,7 +456,7 @@ export const executor = createExecutor({
       // QVAC-19555: passes locally on macOS in ~2m, but the current
       // mac-mini-m4-gpu CI runner crashes in ggml-metal and leaves later
       // tests timing out. Re-enable when a stronger macOS runner is available.
-      new SkipExecutor(/^video-basic-txt2vid$/, "Quarantined on macOS CI until a stronger runner replaces mac-mini-m4-gpu"),
+      new SkipExecutor(/^video-basic-(txt2vid|img2vid)$/, "Quarantined on macOS CI until a stronger runner replaces mac-mini-m4-gpu"),
     ] : []),
 
     new ModelLoadingExecutor(resources),

@@ -36,6 +36,11 @@ on:
         type: boolean
         required: false
         default: false
+      test_groups:
+        description: "JSON array of {name,grep} overrides. When set, replaces auto-detected test-groups.json shards."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -165,6 +170,7 @@ jobs:
           qvac-perf-runs: ${{ inputs.qvac_perf_runs }}
           qvac-perf-warmup-runs: ${{ inputs.qvac_perf_warmup_runs }}
           qvac-perf-only: ${{ inputs.qvac_perf_only }}
+          test-groups: ${{ inputs.test_groups }}
 
       - name: Schedule Device Farm test runs
         id: schedule
@@ -184,6 +190,13 @@ jobs:
         with:
           run-arns: ${{ steps.schedule.outputs.run-arns }}
           run-count: ${{ steps.schedule.outputs.run-count }}
+
+      - name: Cancel Device Farm runs on workflow cancellation
+        if: cancelled() && steps.schedule.outputs.run-arns != '' && steps.schedule.outputs.run-arns != '[]'
+        uses: ./.github/actions/run-mobile-integration-tests/cancel-device-farm-runs
+        with:
+          run-arns: ${{ steps.schedule.outputs.run-arns }}
+          aws-role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
 
       - name: Collect and upload Device Farm logs
         if: always() && !cancelled()

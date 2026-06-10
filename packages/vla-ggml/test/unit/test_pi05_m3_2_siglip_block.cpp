@@ -82,8 +82,10 @@ TEST(Pi05M3_2, SiglipBlock0MatchesPytorch) {
   //       output (blk_0.out[cam0]) from the PyTorch reference.
   qvac_vla_safetensors_lite::Reader activations;
   ASSERT_NO_THROW(activations.open(activations_path));
-  const std::vector<float> input = activations.readF32("vision.pos_embed_out[cam0]");
-  const std::vector<float> expected = activations.readF32("vision.blk_0.out[cam0]");
+  const std::vector<float> input =
+      activations.readF32("vision.pos_embed_out[cam0]");
+  const std::vector<float> expected =
+      activations.readF32("vision.blk_0.out[cam0]");
   ASSERT_EQ(input.size(), static_cast<size_t>(N_PATCHES * HIDDEN));
   ASSERT_EQ(expected.size(), static_cast<size_t>(N_PATCHES * HIDDEN));
 
@@ -166,8 +168,7 @@ TEST(Pi05M3_2, SiglipBlock0MatchesPytorch) {
   }
   const float rms_diff =
       static_cast<float>(std::sqrt(sum_sq_diff / expected.size()));
-  std::cerr << "[M3.2] blk_0.out: cos=" << cos
-            << " max_abs_diff=" << diff
+  std::cerr << "[M3.2] blk_0.out: cos=" << cos << " max_abs_diff=" << diff
             << " rms_diff=" << rms_diff
             << " max_abs_expected=" << max_abs_expected
             << " rel_max=" << (diff / std::max(max_abs_expected, 1e-9f))

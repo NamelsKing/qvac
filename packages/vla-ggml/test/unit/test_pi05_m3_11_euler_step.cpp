@@ -98,8 +98,7 @@ TEST(Pi05M3_11, EulerStepMatchesPytorch) {
   std::memcpy(v_t_t->data, v_t.data(), v_t.size() * sizeof(float));
 
   using qvac_lib_infer_vla_ggml::pi05BuildEulerStepGraph;
-  struct ggml_tensor* out = pi05BuildEulerStepGraph(
-      ctx_g, x_t, v_t_t, STEP_DT);
+  struct ggml_tensor* out = pi05BuildEulerStepGraph(ctx_g, x_t, v_t_t, STEP_DT);
   ASSERT_NE(out, nullptr);
 
   struct ggml_cgraph* gf = ggml_new_graph(ctx_g);
@@ -107,8 +106,7 @@ TEST(Pi05M3_11, EulerStepMatchesPytorch) {
   ASSERT_EQ(pi05_test::computeGraphCpu(gf),
             GGML_STATUS_SUCCESS);
 
-  ASSERT_EQ(ggml_nelements(out),
-            static_cast<int64_t>(N_ACT * ACTION_DIM));
+  ASSERT_EQ(ggml_nelements(out), static_cast<int64_t>(N_ACT * ACTION_DIM));
   const float* got = static_cast<const float*>(out->data);
   const float cos = cosineSim(got, expected.data(), expected.size());
   const float diff = maxAbsDiff(got, expected.data(), expected.size());
@@ -121,10 +119,8 @@ TEST(Pi05M3_11, EulerStepMatchesPytorch) {
     }
   }
   std::cerr << "[M3.11] ode.step_0.x_next: cos=" << cos
-            << " max_abs_diff=" << diff
-            << " max_abs_expected=" << max_abs
-            << " rel_max=" << (diff / std::max(max_abs, 1e-9f))
-            << "\n";
+            << " max_abs_diff=" << diff << " max_abs_expected=" << max_abs
+            << " rel_max=" << (diff / std::max(max_abs, 1e-9f)) << "\n";
 
   // Euler step is just a scale + add — F32 throughout, no quant noise.
   // Tight bars.

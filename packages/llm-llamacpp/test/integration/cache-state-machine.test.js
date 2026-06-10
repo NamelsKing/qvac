@@ -3,7 +3,7 @@
 const path = require('bare-path')
 const fs = require('bare-fs')
 const LlmLlamacpp = require('../../index.js')
-const { ensureModel, safeTest } = require('./utils')
+const { cleanupIntegrationCacheFiles, ensureModel, safeTest } = require('./utils')
 const { attachSpecLogger } = require('./spec-logger')
 const os = require('bare-os')
 
@@ -85,6 +85,12 @@ function cacheOpts (sessionName, extra = {}) {
   return { cacheKey: sessionName, ...extra }
 }
 
+function cleanupRunOptionsCache (runOptions) {
+  if (typeof runOptions?.cacheKey === 'string') {
+    cleanupIntegrationCacheFiles(runOptions.cacheKey)
+  }
+}
+
 async function setupModel (t, overrides = {}) {
   const [modelName, dirPath] = await ensureModel({
     modelName: DEFAULT_MODEL.name,
@@ -124,6 +130,7 @@ async function setupModel (t, overrides = {}) {
 }
 
 async function runAndCollectStats (model, prompt, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
   let chunkCount = 0
 
@@ -140,6 +147,7 @@ async function runAndCollectStats (model, prompt, runOptions) {
 }
 
 async function runAndCancelAfterFirstToken (model, prompt, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
   let chunkCount = 0
   let stopRequested = false
@@ -164,6 +172,7 @@ async function runAndCancelAfterFirstToken (model, prompt, runOptions) {
 }
 
 async function runWithTimeoutCancellation (model, prompt, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
   await model.cancel()
   return normalizeStats(response.stats, { _chunkCount: 0 })
@@ -171,6 +180,7 @@ async function runWithTimeoutCancellation (model, prompt, runOptions) {
 
 /** Cancels via QvacResponse (one test keeps coverage of response.cancel()). */
 async function runWithTimeoutCancellationViaResponse (model, prompt, runOptions) {
+  cleanupRunOptionsCache(runOptions)
   const response = await model.run(prompt, runOptions)
   if (typeof response.cancel === 'function') {
     await response.cancel()
@@ -492,6 +502,21 @@ safeTest('Options: prefill with saveCacheToDisk persists cache file', { timeout:
   t.ok(stats.CacheTokens > 0, 'prefill ingests prompt into cache')
   t.ok(fs.existsSync(sessionName), 'prefill + saveCacheToDisk writes cache file to disk')
   t.ok(fs.statSync(sessionName).size > 0, 'persisted prefill cache file is non-empty')
+})
+
+safeTest('saveCacheToDisk to unwritable path rejects with UnableToSaveSessionFile', { timeout: 600_000 }, async t => {
+  const { model } = await setupModel(t)
+  const badPath = path.join(os.tmpdir(), 'qvac-nonexistent-dir-' + Date.now(), 'session.bin')
+  try {
+    const response = await model.run([...BASE_PROMPT], { cacheKey: badPath, saveCacheToDisk: true })
+    await response.await()
+    t.fail('should have thrown on unwritable cache path')
+  } catch (err) {
+    t.ok(
+      /failed to save session file|failed to promote tmp file/.test(err.message),
+      'rejection message identifies the save failure'
+    )
+  }
 })
 
 safeTest('Options: prefilled cache primes a follow-up conversation', { timeout: 600_000 }, async t => {
