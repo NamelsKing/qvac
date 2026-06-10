@@ -74,10 +74,9 @@ runs:
           [ -n "$_arn" ] && RUN_ARNS+=("$_arn")
         done < <(echo "$RUN_ARNS_JSON" | jq -r '.[]')
 
-        # QVAC-19368: only download artifacts we actually use — Customer_Artifacts
-        # (contains bare_console.log, test-results.json, logcat_full.txt, perf
-        # data) and Logcat (C++ logs). Everything else (screenshots, XML,
-        # videos, install logs) is skipped to cut download time + upload size.
+        # QVAC-19368: only download Customer Artifacts + Logcat. Skip TCP dump
+        # (up to 624MB), screenshots, videos, XML, install logs — nobody uses
+        # them and they dominated the download time.
         download_artifact() {
           local dest_dir="$1" art_json
           art_json=$(echo "$2" | base64 -d)
@@ -86,8 +85,12 @@ runs:
           name=$(echo "$art_json" | jq -r '.name')
           ext=$(echo "$art_json" | jq -r '.extension')
           [ -z "$url" ] || [ "$url" = "null" ] && return
-          # Only download Customer Artifacts and Logcat files. Device Farm
-          # uses "Customer Artifacts" (with space) as the artifact name.
+          if [ "$PLATFORM" = "Android" ] && [ "$ext" = "mp4" ]; then
+            return
+          fi
+          # Filter: only Customer Artifacts (bare_console, test-results, perf,
+          # logcat_full) and Logcat (C++ logs). Device Farm names the zip
+          # "Customer Artifacts" (with space).
           case "$name" in
             *Customer*Artifact*|*Logcat*|*logcat*) ;;
             *) return ;;
@@ -96,74 +99,53 @@ runs:
           safe_name=$(echo "$name" | tr ' /' '__' | tr -cd '[:alnum:]_.-')
           curl -fsSL --max-time 300 -o "${dest_dir}/${safe_name}.${ext}" "$url" || true
         }
-        export -f download_artifact
-        export PLATFORM
 
-        download_run_logs() {
-          local run_arn="$1" log_dir="$2"
-          [ -z "$run_arn" ] && return
-          local run_details run_label safe_run
-          run_details=$(aws devicefarm get-run --arn "$run_arn" --output json 2>/dev/null || echo '{}')
-          run_label=$(echo "$run_details" | jq -r '.run.name // "unknown"')
-          safe_run=$(echo "$run_label" | tr ' /' '__' | tr -cd '[:alnum:]_-')
-          echo "[$$] ========================================"
-          echo "[$$] Run: $run_label"
-          echo "[$$] ========================================"
+        for RUN_ARN in "${RUN_ARNS[@]}"; do
+          [ -z "$RUN_ARN" ] && continue
+          RUN_DETAILS=$(aws devicefarm get-run --arn "$RUN_ARN" --output json 2>/dev/null || echo '{}')
+          RUN_LABEL=$(echo "$RUN_DETAILS" | jq -r '.run.name // "unknown"')
+          SAFE_RUN=$(echo "$RUN_LABEL" | tr ' /' '__' | tr -cd '[:alnum:]_-')
+          echo ""
+          echo "========================================"
+          echo "Run: $RUN_LABEL"
+          echo "========================================"
 
-          local jobs_json
-          jobs_json=$(aws devicefarm list-jobs --arn "$run_arn" --output json 2>/dev/null || echo '{"jobs":[]}')
-          for job_arn in $(echo "$jobs_json" | jq -r '.jobs[].arn'); do
-            local device_name safe_dev job_dir
-            device_name=$(echo "$jobs_json" | jq -r --arg arn "$job_arn" '.jobs[] | select(.arn == $arn) | .device.name // "unknown"')
-            safe_dev=$(echo "$device_name" | tr ' /' '__' | tr -cd '[:alnum:]_-')
-            job_dir="$log_dir/${safe_run}_${safe_dev}"
-            mkdir -p "$job_dir"
-            echo "[$$]   Device: $device_name"
+          JOBS=$(aws devicefarm list-jobs --arn "$RUN_ARN" --output json 2>/dev/null || echo '{"jobs":[]}')
+          for JOB_ARN in $(echo "$JOBS" | jq -r '.jobs[].arn'); do
+            DEVICE_NAME=$(echo "$JOBS" | jq -r --arg arn "$JOB_ARN" '.jobs[] | select(.arn == $arn) | .device.name // "unknown"')
+            SAFE_DEV=$(echo "$DEVICE_NAME" | tr ' /' '__' | tr -cd '[:alnum:]_-')
+            JOB_DIR="$LOG_DIR/${SAFE_RUN}_${SAFE_DEV}"
+            mkdir -p "$JOB_DIR"
+            echo "  Device: $DEVICE_NAME"
 
-            local suites_json
-            suites_json=$(aws devicefarm list-suites --arn "$job_arn" --output json 2>/dev/null || echo '{"suites":[]}')
-            for suite_arn in $(echo "$suites_json" | jq -r '.suites[].arn'); do
-              local suite_name safe_suite suite_dir
-              suite_name=$(echo "$suites_json" | jq -r --arg arn "$suite_arn" '.suites[] | select(.arn == $arn) | .name // "unknown"')
+            SUITES=$(aws devicefarm list-suites --arn "$JOB_ARN" --output json 2>/dev/null || echo '{"suites":[]}')
+            for SUITE_ARN in $(echo "$SUITES" | jq -r '.suites[].arn'); do
+              SUITE_NAME=$(echo "$SUITES" | jq -r --arg arn "$SUITE_ARN" '.suites[] | select(.arn == $arn) | .name // "unknown"')
 
-              case "$suite_name" in
+              case "$SUITE_NAME" in
                 "Setup Test"|"Teardown Test") continue ;;
               esac
 
-              safe_suite=$(echo "$suite_name" | tr ' /' '__' | tr -cd '[:alnum:]_-')
-              suite_dir="${job_dir}/${safe_suite}"
-              mkdir -p "$suite_dir"
+              SAFE_SUITE=$(echo "$SUITE_NAME" | tr ' /' '__' | tr -cd '[:alnum:]_-')
+              SUITE_DIR="${JOB_DIR}/${SAFE_SUITE}"
+              mkdir -p "$SUITE_DIR"
 
-              # FILE artifacts: only Customer_Artifacts.zip matters here.
-              local artifacts
-              artifacts=$(aws devicefarm list-artifacts --arn "$suite_arn" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
-              for art in $(echo "$artifacts" | jq -r '.artifacts[] | @base64'); do
-                download_artifact "$suite_dir" "$art"
+              ARTIFACTS=$(aws devicefarm list-artifacts --arn "$SUITE_ARN" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
+              for ART in $(echo "$ARTIFACTS" | jq -r '.artifacts[] | @base64'); do
+                download_artifact "$SUITE_DIR" "$ART"
               done
 
-              # LOG artifacts: only Logcat matters here.
-              local artifacts_log
-              artifacts_log=$(aws devicefarm list-artifacts --arn "$suite_arn" --type LOG --output json 2>/dev/null || echo '{"artifacts":[]}')
-              for art in $(echo "$artifacts_log" | jq -r '.artifacts[] | @base64'); do
-                download_artifact "$suite_dir" "$art"
+              ARTIFACTS_LOG=$(aws devicefarm list-artifacts --arn "$SUITE_ARN" --type LOG --output json 2>/dev/null || echo '{"artifacts":[]}')
+              for ART in $(echo "$ARTIFACTS_LOG" | jq -r '.artifacts[] | @base64'); do
+                download_artifact "$SUITE_DIR" "$ART"
               done
             done
-          done
-        }
-        export -f download_run_logs
 
-        MAX_PARALLEL=8
-        PIDS=()
-        for RUN_ARN in "${RUN_ARNS[@]}"; do
-          download_run_logs "$RUN_ARN" "$LOG_DIR" &
-          PIDS+=($!)
-          if [ ${#PIDS[@]} -ge $MAX_PARALLEL ]; then
-            wait "${PIDS[0]}"
-            PIDS=("${PIDS[@]:1}")
-          fi
-        done
-        for pid in "${PIDS[@]}"; do
-          wait "$pid"
+            JOB_ARTIFACTS=$(aws devicefarm list-artifacts --arn "$JOB_ARN" --type FILE --output json 2>/dev/null || echo '{"artifacts":[]}')
+            for ART in $(echo "$JOB_ARTIFACTS" | jq -r '.artifacts[] | @base64'); do
+              download_artifact "$JOB_DIR" "$ART"
+            done
+          done
         done
 
         echo ""
