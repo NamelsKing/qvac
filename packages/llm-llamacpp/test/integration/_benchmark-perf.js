@@ -101,11 +101,18 @@ function benchmarkModel (size, quant, cacheType) {
       const [modelName, dirPath] = await ensureModel({ modelName: spec.name, downloadUrl: spec.url })
       const modelPath = path.join(dirPath, modelName)
 
+      // Up-front Crashed placeholders for EVERY combo across BOTH devices before
+      // any load/run, so a hard native crash during the first device's pass still
+      // leaves rows for the other device. Real metrics supersede these.
+      for (const device of DEVICES) {
+        for (const rb of REASONING_BUDGETS) {
+          recordCrashedPlaceholder(`[${spec.id}] [${device}] [rb=${rb}] [kv=${cacheType}]`, device, `${id}-${device}-rb${rb}`)
+        }
+      }
+
       for (const device of DEVICES) {
         const labelFor = rb => `[${spec.id}] [${device}] [rb=${rb}] [kv=${cacheType}]`
         const modelFor = rb => `${id}-${device}-rb${rb}`
-        // Up-front Crashed placeholders for every combo on this device.
-        for (const rb of REASONING_BUDGETS) recordCrashedPlaceholder(labelFor(rb), device, modelFor(rb))
 
         let addon = null
         try {
