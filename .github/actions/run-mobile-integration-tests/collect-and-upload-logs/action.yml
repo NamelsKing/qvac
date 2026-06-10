@@ -86,9 +86,10 @@ runs:
           name=$(echo "$art_json" | jq -r '.name')
           ext=$(echo "$art_json" | jq -r '.extension')
           [ -z "$url" ] || [ "$url" = "null" ] && return
-          # Only download Customer_Artifacts.zip and Logcat files.
+          # Only download Customer Artifacts and Logcat files. Device Farm
+          # uses "Customer Artifacts" (with space) as the artifact name.
           case "$name" in
-            *Customer_Artifacts*|*Logcat*|*logcat*) ;;
+            *Customer*Artifact*|*Logcat*|*logcat*) ;;
             *) return ;;
           esac
           local safe_name
