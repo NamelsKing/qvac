@@ -95,6 +95,7 @@ jobs:
       - label-gate
     if: needs.label-gate.outputs.authorised == 'true' && inputs.run_mobile && !inputs.summarize_only
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -122,6 +123,7 @@ jobs:
       - label-gate
     if: needs.label-gate.outputs.authorised == 'true' && !inputs.summarize_only
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -439,11 +441,27 @@ jobs:
           path: baseline-reports
         continue-on-error: true
 
+      - name: Verify baseline artifacts downloaded
+        if: inputs.compare_run_id != ''
+        shell: bash
+        env:
+          COMPARE_RUN_ID: ${{ inputs.compare_run_id }}
+        run: |
+          if ! find baseline-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
+            echo "::error::No baseline artifacts found for run $COMPARE_RUN_ID (wrong run ID, or artifacts expired past the 90-day retention). A comparison was requested but cannot be produced."
+            exit 1
+          fi
+
       - name: Render unified benchmark report
         shell: bash
+        env:
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+          COMPARE_RUN_ID: ${{ inputs.compare_run_id }}
+          ADDON_VERSION: ${{ steps.addon_ver.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           if ! find combined-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
-            echo "::error::No benchmark reports found for run ${{ inputs.artifact_run_id || github.run_id }}. Nothing to render."
+            echo "::error::No benchmark reports found for run $ARTIFACT_RUN_ID. Nothing to render."
             exit 1
           fi
           mkdir -p benchmark-artifacts
@@ -454,14 +472,14 @@ jobs:
           # desktop-meta.json inside the sweep artifact, so it's correct on
           # re-renders too; no --desktop-device needed here.
           ARGS=(--dir combined-reports --output benchmark-artifacts/qwen35-benchmark-findings.md)
-          if [ -n "${{ steps.addon_ver.outputs.version }}" ]; then
-            ARGS+=(--addon-version "${{ steps.addon_ver.outputs.version }}")
+          if [ -n "$ADDON_VERSION" ]; then
+            ARGS+=(--addon-version "$ADDON_VERSION")
           fi
           if [ -d baseline-reports ] && find baseline-reports -name "*.json" -type f 2>/dev/null | grep -q .; then
             ARGS+=(--compare-dir baseline-reports)
-            if [ -n "${{ inputs.compare_run_id }}" ]; then
-              ARGS+=(--baseline-run-id "${{ inputs.compare_run_id }}")
-              ARGS+=(--baseline-run-url "https://github.com/${{ github.repository }}/actions/runs/${{ inputs.compare_run_id }}")
+            if [ -n "$COMPARE_RUN_ID" ]; then
+              ARGS+=(--baseline-run-id "$COMPARE_RUN_ID")
+              ARGS+=(--baseline-run-url "https://github.com/$REPO/actions/runs/$COMPARE_RUN_ID")
             fi
           fi
 
