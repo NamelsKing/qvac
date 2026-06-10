@@ -362,6 +362,26 @@ struct ggml_tensor* newF16TensorLike(
   return tensor;
 }
 
+struct ggml_tensor* newF32TensorLike(
+    struct ggml_context* ctx, struct ggml_tensor* src,
+    const std::string& name) {
+  struct ggml_tensor* tensor = ggml_new_tensor(
+      ctx,
+      GGML_TYPE_F32,
+      ggml_n_dims(src),
+      src->ne); // NOLINT(hicpp-no-array-decay) - ggml struct member is C array
+  ggml_set_name(tensor, name.c_str());
+  return tensor;
+}
+
+// Depthwise conv weights have shape [KW, KH, 1, C] with KW>1 (single input
+// channel per group). They are kept F32 so the direct GGML_OP_CONV_2D_DW kernel
+// runs on every backend (the CPU/Vulkan f32 paths require F32 weights; Metal
+// and Vulkan also accept f16 but CPU does not).
+bool isDepthwiseWeight(const struct ggml_tensor* src) {
+  return src->ne[2] == 1 && src->ne[0] > 1;
+}
+
 int samePadding(int kernel) { return (kernel - 1) / 2; }
 
 float sigmoid(float value) { return 1.0F / (1.0F + std::exp(-value)); }
@@ -482,7 +502,10 @@ struct GraphBuilder {
       // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
       const std::string& convPrefix, const std::string& bnPrefix, int strideW,
       int strideH, int kernel, bool useHardswish) const {
-    struct ggml_tensor* conv = ggml_conv_2d_dw(
+    // Depthwise via the direct Metal kernel (GGML_OP_CONV_2D_DW) instead of the
+    // im2col + per-channel batched matmul, which is pathologically slow on Metal
+    // (it dominated recognition latency). Weight is [KW,KH,1,C] as required.
+    struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx,
         t(convPrefix + ".weight"),
         x,
@@ -1020,7 +1043,9 @@ private:
         raise("missing GGUF tensor: " + name);
       }
       struct ggml_tensor* dst =
-          newF16TensorLike(graph.weightsCtx.get(), src, name);
+          isDepthwiseWeight(src)
+              ? newF32TensorLike(graph.weightsCtx.get(), src, name)
+              : newF16TensorLike(graph.weightsCtx.get(), src, name);
       graph.weights.emplace(name, dst);
       return dst;
     };
@@ -1142,6 +1167,11 @@ private:
             static_cast<int64_t>(count));
         ggml_backend_tensor_set(
             dst, values.data(), 0, values.size() * sizeof(ggml_fp16_t));
+      } else if (dst->type == GGML_TYPE_F32 && src->type == GGML_TYPE_F16) {
+        // Depthwise weights are promoted to F32 (see isDepthwiseWeight).
+        const std::vector<float> values = tensorToF32(src, name);
+        ggml_backend_tensor_set(
+            dst, values.data(), 0, values.size() * sizeof(float));
       } else {
         raise("unsupported tensor dtype conversion while uploading: " + name);
       }
@@ -1187,28 +1217,43 @@ private:
         auto it = graph.weights.find(convWeightName);
         if (it != graph.weights.end()) {
           struct ggml_tensor* wTensor = it->second;
-          if (wTensor->type != GGML_TYPE_F16) {
-            raise("BN fold: expected F16 conv weight for " + convWeightName);
-          }
           const int64_t oc = wTensor->ne[3];
           if (static_cast<size_t>(oc) != scale.size()) {
             raise("BN fold: output-channel mismatch for " + convWeightName);
           }
           const int64_t perOc = wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
           const size_t n = static_cast<size_t>(oc * perOc);
-          std::vector<ggml_fp16_t> wbuf(n);
-          ggml_backend_tensor_get(
-              wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
-          for (int64_t o = 0; o < oc; ++o) {
-            const float s = scale[static_cast<size_t>(o)];
-            for (int64_t i = 0; i < perOc; ++i) {
-              const size_t idx = static_cast<size_t>((o * perOc) + i);
-              wbuf[idx] =
-                  ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
+          // Pointwise/regular conv weights are F16; depthwise weights are F32
+          // (see isDepthwiseWeight). Fold the per-channel scale in either dtype.
+          if (wTensor->type == GGML_TYPE_F16) {
+            std::vector<ggml_fp16_t> wbuf(n);
+            ggml_backend_tensor_get(
+                wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
+            for (int64_t o = 0; o < oc; ++o) {
+              const float s = scale[static_cast<size_t>(o)];
+              for (int64_t i = 0; i < perOc; ++i) {
+                const size_t idx = static_cast<size_t>((o * perOc) + i);
+                wbuf[idx] = ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
+              }
             }
+            ggml_backend_tensor_set(
+                wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
+          } else if (wTensor->type == GGML_TYPE_F32) {
+            std::vector<float> wbuf(n);
+            ggml_backend_tensor_get(
+                wTensor, wbuf.data(), 0, n * sizeof(float));
+            for (int64_t o = 0; o < oc; ++o) {
+              const float s = scale[static_cast<size_t>(o)];
+              for (int64_t i = 0; i < perOc; ++i) {
+                const size_t idx = static_cast<size_t>((o * perOc) + i);
+                wbuf[idx] *= s;
+              }
+            }
+            ggml_backend_tensor_set(
+                wTensor, wbuf.data(), 0, n * sizeof(float));
+          } else {
+            raise("BN fold: unexpected conv weight dtype for " + convWeightName);
           }
-          ggml_backend_tensor_set(
-              wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
         }
       }
     }
