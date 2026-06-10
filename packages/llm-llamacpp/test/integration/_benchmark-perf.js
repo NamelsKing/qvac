@@ -8,7 +8,7 @@
 //
 // Each shard sweeps its model across both devices (gpu, cpu) and both
 // reasoning-budget values (-1, 0), recording TTFT / TPS / ppTPS. The full
-// matrix (2 sizes x 5 quants x 3 KV-cache types x 2 devices x 2 budgets) is
+// matrix (2 sizes x 5 quants x 7 KV-cache types x 2 devices x 2 budgets) is
 // split across the shard files; nothing here reduces it.
 
 const path = require('bare-path')
@@ -87,11 +87,18 @@ function recordCrashedPlaceholder (label, device, model) {
 
 // Registers the benchmark test for one (model x quant x kv-cache type),
 // sweeping device x reasoning-budget. One Device Farm session per call.
-// kv-cache type is set as cache-type-k/v at load time; Adreno devices don't
-// support quantized KV cache, so those combos may crash — reported as Crashed.
-function benchmarkModel (size, quant, cacheType) {
+// kv-cache type is set as cache-type-k/v at load time. Adreno devices don't
+// support quantized KV cache, and TurboQuant/PolarQuant (tbq*/pq*) ship Vulkan
+// + CPU kernels only (rejected on Metal/iOS, unsupported on some GPUs), so
+// those combos may crash or fail to load — reported as Crashed.
+function benchmarkModel (size, quant, cacheK, cacheV) {
   const spec = modelSpec(size, quant)
-  const id = `${spec.id}-${cacheType}`
+  // kvLabel uses the k/v form when key and value differ (e.g. TurboQuant
+  // tbq3_0/pq3_0), matching the renderer's [kv=...] tag. kvId is the
+  // slash-free token used for the model id and per-run identifiers.
+  const kvLabel = cacheK === cacheV ? cacheK : `${cacheK}/${cacheV}`
+  const kvId = cacheK === cacheV ? cacheK : `${cacheK}-${cacheV}`
+  const id = `${spec.id}-${kvId}`
   safeTest(`Mobile perf benchmark: ${id} (TTFT / TPS / ppTPS)`, {
     timeout: 1_800_000,
     skip: !isMobile
@@ -106,19 +113,19 @@ function benchmarkModel (size, quant, cacheType) {
       // leaves rows for the other device. Real metrics supersede these.
       for (const device of DEVICES) {
         for (const rb of REASONING_BUDGETS) {
-          recordCrashedPlaceholder(`[${spec.id}] [${device}] [rb=${rb}] [kv=${cacheType}]`, device, `${id}-${device}-rb${rb}`)
+          recordCrashedPlaceholder(`[${spec.id}] [${device}] [rb=${rb}] [kv=${kvLabel}]`, device, `${id}-${device}-rb${rb}`)
         }
       }
 
       for (const device of DEVICES) {
-        const labelFor = rb => `[${spec.id}] [${device}] [rb=${rb}] [kv=${cacheType}]`
+        const labelFor = rb => `[${spec.id}] [${device}] [rb=${rb}] [kv=${kvLabel}]`
         const modelFor = rb => `${id}-${device}-rb${rb}`
 
         let addon = null
         try {
           addon = new LlmLlamacpp({
             files: { model: [modelPath] },
-            config: { ...RUNTIME, device, 'cache-type-k': cacheType, 'cache-type-v': cacheType },
+            config: { ...RUNTIME, device, 'cache-type-k': cacheK, 'cache-type-v': cacheV },
             logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} },
             opts: { stats: true }
           })
