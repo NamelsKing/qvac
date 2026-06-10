@@ -1203,6 +1203,12 @@ Abort the job (if still `queued` / `in_progress`) and drop its rendered assets.
 | 503 | `transcode_unavailable` | `?format=mp4` requested but ffmpeg is not on the server's `PATH`. |
 | 503 | `model_not_ready` | Model not loaded yet. |
 
+### Request cancellation
+
+When an HTTP client disconnects before a response finishes (closes the connection or aborts the request), the server cancels the in-flight inference for that request instead of letting it run to completion — freeing the model to serve the next call. This applies to both blocking and streaming requests across the inference routes (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/audio/*`).
+
+Video jobs are asynchronous and are not tied to the creating connection; cancel them explicitly with `DELETE /v1/videos/{id}` (see [Videos](#videos)).
+
 ### Authentication
 
 By default, the server accepts unauthenticated requests on `127.0.0.1`. To require a Bearer token, run the server with the `--api-key` flag:
