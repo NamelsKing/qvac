@@ -222,12 +222,14 @@ runs:
         def device_label(filename):
             """Extract a readable device name from the artifact filename."""
             base = os.path.basename(filename).rsplit('.', 1)[0]
-            # Match full device names like "Apple_iPhone_17", "Google_Pixel_9_Pro",
-            # "Samsung_Galaxy_S25_Ultra". Capture everything after the vendor prefix.
-            m = re.search(r'((?:Apple|Google|Samsung)[_ ]\w+(?:[_ ]\w+)*)', base)
+            # Match device names: stop before the log-type suffix (bare_console,
+            # test-results, logcat_full, appium, Logcat, etc.)
+            m = re.search(
+                r'((?:Apple|Google|Samsung)[_ ][\w ]+?)(?:_(?:bare_console|test-results|logcat_full|appium|Logcat))',
+                base)
             if not m:
-                return None  # generic log (e.g. "Android_logcat_full"), skip
-            return m.group(1).replace('_', ' ')
+                return None
+            return m.group(1).replace('_', ' ').strip()
 
         def parse_tap_from_file(filepath):
             """Parse brittle TAP lines from a logcat_full.txt or bare_console.log."""
