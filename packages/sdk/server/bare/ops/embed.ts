@@ -44,7 +44,7 @@ export async function embed(
   // `cancel({ requestId })` and broad `cancel({ modelId, kind: "embeddings" })`
   // straight to this context's signal. Falls back to a server-generated
   // id if the client didn't send one (older releases).
-  await using ctx = getRequestRegistry().begin({
+  await using ctx = await getRequestRegistry().begin({
     requestId: requestId ?? generateServerRequestId(),
     kind: "embeddings",
     modelId,
@@ -104,6 +104,7 @@ export async function embed(
     ...(response.stats?.tokens_per_second !== undefined && { tokensPerSecond: response.stats.tokens_per_second }),
     ...(response.stats?.total_tokens !== undefined && { totalTokens: response.stats.total_tokens }),
     ...(response.stats?.backendDevice !== undefined && { backendDevice: response.stats.backendDevice }),
+    ...(response.stats?.context_size !== undefined && { contextSize: response.stats.context_size }),
   };
 
   const embeddingsArray = rawEmbeddings[0];

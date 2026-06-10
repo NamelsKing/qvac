@@ -41,6 +41,8 @@ import {
   isAddonContextOverflowError,
   parseContextOverflowMessage,
 } from "@/server/bare/plugins/llamacpp-completion/ops/context-overflow";
+import { isMobile } from "@/server/bare/registry/runtime-context-registry";
+import { stripMultiGpuKeys } from "@/server/utils/multi-gpu-mobile";
 
 
 function createLlmModel(
@@ -52,6 +54,16 @@ function createLlmModel(
   const logger = createStreamLogger(modelId, ModelType.llamacppCompletion);
   registerAddonLogger(modelId, ModelType.llamacppCompletion, logger);
   const llmConfigStrings = transformLlmConfig(llmConfig);
+
+  if (isMobile()) {
+    const stripped = stripMultiGpuKeys(llmConfigStrings);
+    if (stripped.length > 0) {
+      getServerLogger().warn(
+        `[${ModelType.llamacppCompletion}:${modelId}] Multi-GPU parameters (${stripped.join(", ")}) are not supported on mobile (single-GPU device) — removing from config; model will load with single-GPU defaults`,
+      );
+    }
+  }
+
   const modelFiles = expandGGUFIntoShards(modelPath);
 
   const model = new LlmLlamacpp({
@@ -145,13 +157,28 @@ export const llmPlugin = definePlugin({
         // client can target this run with `cancel({ requestId })`.
         // Falls back to a server-generated id if the client (e.g. an
         // older release) didn't send one.
-        await using ctx = getRequestRegistry().begin({
+        await using ctx = await getRequestRegistry().begin({
           requestId: request.requestId ?? generateServerRequestId(),
           kind: "completion",
           modelId: request.modelId,
         });
 
         const requestLogger = withRequestContext(getServerLogger(), ctx);
+
+        // begin() can return already-aborted when the client cancels while
+        // this completion is queued behind another same-model one. It never
+        // decoded, so it must not touch the shared native context — emit a
+        // cancelled terminal and return. Boolean(...) keeps ctx.signal.aborted
+        // a boolean so the mid-stream check below isn't narrowed to false.
+        const abortedBeforeRun = Boolean(ctx.signal.aborted);
+        if (abortedBeforeRun) {
+          yield {
+            type: "completionStream" as const,
+            done: true,
+            events: normalizer.finish({ stopReason: "cancelled" as const }),
+          };
+          return;
+        }
 
         const stream = completion(
           {
@@ -185,17 +212,28 @@ export const llmPlugin = definePlugin({
           }
 
           const { modelExecutionMs, stats, toolCalls } = result.value;
-          // `stopReason: "cancelled"` rides the success-done path: the
-          // events stream ends normally, the cancellation is observable
-          // via the last event's `stopReason`, and the client-side
-          // `CompletionRun` aggregates (`final` / `text` / `toolCalls` /
-          // `stats`) reject with `InferenceCancelledError` carrying the
-          // partial state.
+          // Cancellation rides the done path: observable via the last event's
+          // stopReason; client aggregates reject with InferenceCancelledError.
           const cancelled = ctx.signal.aborted;
+          // EOS tokens are not decoded by llama_decode, so n_eval (and
+          // therefore stats.generatedTokens) counts only real decode calls.
+          // When generatedTokens >= effectivePredict the run exhausted its
+          // token budget without hitting EOS — emit stopReason "length".
+          // -1 (unlimited) and -2 (context fill) must never trigger this.
+          const effectivePredict =
+            request.generationParams?.predict ??
+            (modelCfg as LlmConfig).predict;
+          const stoppedByBudget =
+            !cancelled &&
+            effectivePredict !== undefined &&
+            effectivePredict > 0 &&
+            stats?.generatedTokens !== undefined &&
+            stats.generatedTokens >= effectivePredict;
           const terminalEvents = normalizer.finish({
             ...(stats && { stats }),
             ...(toolCalls.length > 0 && { toolCalls }),
             ...(cancelled && { stopReason: "cancelled" as const }),
+            ...(stoppedByBudget && { stopReason: "length" as const }),
           });
 
           if (!request.stream) {

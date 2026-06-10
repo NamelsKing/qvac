@@ -40,6 +40,7 @@
 #include "steps.hpp"
 
 using ggml_backend_t = struct ggml_backend*;
+using ggml_backend_dev_t = struct ggml_backend_device*;
 using ggml_gallocr_t = struct ggml_gallocr*;
 using OcrGgmlCGraphPtr = struct ggml_cgraph*;
 using OcrGgmlContextPtr = struct ggml_context*;
@@ -119,6 +120,9 @@ public:
     // negative = leave at GGML default, positive = exact count.
     int nThreads{-1};
     std::string backendsDir{};
+    // ggml device the CRNN graph runs on (resolved by `Pipeline` via
+    // `ocr_backend_selection`). nullptr -> CPU device (historical default).
+    ggml_backend_dev_t backendDevice{nullptr};
 
     Config() : defaultRotationAngles{90, 270} {}
     Config(
@@ -184,6 +188,10 @@ private:
   struct RecognizerGraphCache {
     int height = 0;
     int width = 0;
+    // Batch size N the cached graph was built for. The graph topology is
+    // identical for any N at a fixed (height, width), but the input tensor
+    // ne[3] and the LSTM state shapes depend on N, so it is part of the key.
+    int batchN = 0;
     size_t graphSize = 0;
     std::vector<std::uint8_t> ctxBuf;
     OcrGgmlContextPtr gctx = nullptr;
@@ -207,7 +215,8 @@ private:
   runBatchInference(const std::vector<cv::Mat>& images, int dynamicWidth);
   cv::Mat runRecognizerOneCached(
       const float* inputData, int height, int width, size_t graphSize);
-  void ensureRecognizerGraph(int height, int width, size_t graphSize);
+  void
+  ensureRecognizerGraph(int height, int width, int batchN, size_t graphSize);
   void destroyRecognizerGraph();
 
   std::vector<InferredText> processImgList(const std::atomic<bool>* cancelFlag);
