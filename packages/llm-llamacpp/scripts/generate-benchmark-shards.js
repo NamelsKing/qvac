@@ -39,10 +39,6 @@ const mode = process.argv.includes('--check')
 
 const SHARD_PREFIX = 'benchmark-perf-'
 
-function expectedFileNames () {
-  return new Set(matrix().map(shardFileName))
-}
-
 // Verify the committed workflow test_groups match the matrix-derived batches.
 function checkGroups () {
   if (!fs.existsSync(workflowFile)) {
@@ -132,7 +128,7 @@ function assertShards () {
 // Write every matrix shard, then prune any benchmark-perf-*.test.js the matrix
 // no longer produces, so shrinking the matrix never leaves orphans behind.
 function writeShards () {
-  const expected = expectedFileNames()
+  const expected = new Set(matrix().map(shardFileName))
   let written = 0
   for (const cell of matrix()) {
     fs.writeFileSync(path.join(integrationDir, shardFileName(cell)), shardContents(cell))
