@@ -199,12 +199,10 @@ runs:
         echo "Console logs extracted to $CONSOLE_DIR:"
         find "$CONSOLE_DIR" -type f -exec ls -lh {} \; 2>/dev/null || true
 
-    # QVAC-19368: consolidate the per-device *_test-results.json files into a
-    # single test-results-summary.json (one row per test case with its status
-    # + duration per device) so it's easy to see at a glance whether each case
-    # ran, passed, failed, or was skipped (e.g. the VLM aurora gate). The JSON
-    # ships inside the console-logs artifact; a compact table + artifact link
-    # go to the GitHub Step Summary.
+    # QVAC-19368: parse individual test() results from brittle's TAP output
+    # in the bare console / logcat logs, consolidate into a JSON with both
+    # runner-function-level and per-test() detail, and write a summary table
+    # to the GitHub Step Summary.
     - name: Build test-case results summary
       id: results_summary
       if: always() && inputs.run-arns != '[]' && inputs.run-arns != ''
@@ -214,23 +212,76 @@ runs:
         ADDON_NAME: ${{ inputs.addon-npm-name }}
       run: |
         CONSOLE_DIR="console-logs/${PLATFORM}"
-        OUT_JSON="${CONSOLE_DIR}/test-results-summary.json"
-        if ! ls "$CONSOLE_DIR"/*_test-results.json >/dev/null 2>&1; then
-          echo "No per-device test-results.json found — skipping summary"
-          echo "found=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+        OUT_JSON="${CONSOLE_DIR}/test-case-details.json"
 
         python3 - "$CONSOLE_DIR" "$OUT_JSON" "$PLATFORM" "$ADDON_NAME" <<'PY'
         import sys, json, glob, os, re
+
         console_dir, out_json, platform, addon = sys.argv[1:5]
-        rows = {}  # test title -> { device -> {status, durationMs} }
+
+        def device_label(filename):
+            """Extract a readable device name from the artifact filename."""
+            base = os.path.basename(filename).rsplit('.', 1)[0]
+            # Match full device names like "Apple_iPhone_17", "Google_Pixel_9_Pro",
+            # "Samsung_Galaxy_S25_Ultra". Capture everything after the vendor prefix.
+            m = re.search(r'((?:Apple|Google|Samsung)[_ ]\w+(?:[_ ]\w+)*)', base)
+            if not m:
+                return None  # generic log (e.g. "Android_logcat_full"), skip
+            return m.group(1).replace('_', ' ')
+
+        def parse_tap_from_file(filepath):
+            """Parse brittle TAP lines from a logcat_full.txt or bare_console.log."""
+            tests = []
+            seen = set()
+            try:
+                with open(filepath, 'r', errors='replace') as fh:
+                    for line in fh:
+                        # Match TAP lines: "ok N - name" or "not ok N - name"
+                        # In logcat: "... I bare    : ok 1 - name # time = 123ms"
+                        # In bare_console.log: "ok 1 - name # time = 123ms"
+                        m = re.search(r'(?:I bare\s*:\s*)?((?:not )?ok) (\d+) - (.+)', line)
+                        if not m:
+                            continue
+                        passed = m.group(1) == 'ok'
+                        num = int(m.group(2))
+                        rest = m.group(3).strip()
+                        # Deduplicate (logcat has bare + ReactNativeJS echo)
+                        key = (num, rest.split('#')[0].strip())
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        # Parse name, timing, skip
+                        name = rest
+                        time_ms = None
+                        status = 'passed' if passed else 'failed'
+                        if '# SKIP' in rest:
+                            status = 'skipped'
+                            name = rest.split('# SKIP')[0].strip()
+                        elif '# time =' in rest:
+                            tp = re.search(r'# time = ([\d.]+)ms', rest)
+                            if tp:
+                                time_ms = round(float(tp.group(1)))
+                            name = rest.split('# time')[0].strip()
+                        elif not passed:
+                            # "not ok N - name: error message"
+                            parts = rest.split(':', 1)
+                            name = parts[0].strip()
+                        tests.append({
+                            'num': num, 'name': name,
+                            'status': status, 'timeMs': time_ms
+                        })
+            except Exception as e:
+                print(f"  WARNING: failed to parse {filepath}: {e}")
+            return tests
+
+        # ── Collect runner-function-level results from test-results.json ──
+        runner_rows = {}
         devices = set()
         for f in sorted(glob.glob(os.path.join(console_dir, '*_test-results.json'))):
-            base = os.path.basename(f)[:-len('_test-results.json')]
-            # base looks like <Run>_<Device>; take the trailing device name.
-            device = re.sub(r'^.*?_(Apple|Google|Samsung)', r'\1', base).replace('_', ' ')
-            devices.add(device)
+            dev = device_label(f)
+            if not dev:
+                continue
+            devices.add(dev)
             try:
                 d = json.load(open(f))
             except Exception:
@@ -239,39 +290,98 @@ runs:
                 title = t.get('title', '?')
                 status = t.get('status', 'unknown')
                 dur = t.get('duration', 0) or 0
-                # A 0ms 'passed' test is a gate-skip (brittle skip:true), surface as 'skipped'.
-                if status == 'passed' and dur == 0:
+                if status == 'passed' and dur < 500:
                     status = 'skipped'
-                rows.setdefault(title, {})[device] = {'status': status, 'durationMs': dur}
+                runner_rows.setdefault(title, {})[dev] = {
+                    'status': status, 'durationMs': dur
+                }
+
+        # ── Collect individual test() cases from TAP output ──
+        tap_rows = {}
+        for f in sorted(
+            glob.glob(os.path.join(console_dir, '*_logcat_full.txt')) +
+            glob.glob(os.path.join(console_dir, '*_bare_console.log'))
+        ):
+            dev = device_label(f)
+            if not dev:
+                continue
+            devices.add(dev)
+            tests = parse_tap_from_file(f)
+            for t in tests:
+                tap_rows.setdefault(t['name'], {})[dev] = {
+                    'status': t['status'],
+                    'timeMs': t['timeMs']
+                }
+
         devices = sorted(devices)
         summary = {
             'addon': addon, 'platform': platform,
             'devices': devices,
-            'tests': [
-                {'test': title, 'results': rows[title]} for title in sorted(rows)
+            'runners': [
+                {'runner': title, 'results': runner_rows[title]}
+                for title in sorted(runner_rows)
+            ],
+            'testCases': [
+                {'test': name, 'results': tap_rows[name]}
+                for name in sorted(tap_rows)
             ]
         }
+
         with open(out_json, 'w') as fh:
             json.dump(summary, fh, indent=2)
-        print(f"Wrote {out_json} with {len(rows)} test case(s) across {len(devices)} device(s)")
 
-        # Compact GitHub Step Summary table.
+        runner_count = len(runner_rows)
+        case_count = len(tap_rows)
+        print(f"Wrote {out_json}: {runner_count} runners, {case_count} test cases, {len(devices)} devices")
+
+        # ── GitHub Step Summary ──
         sm = os.environ.get('GITHUB_STEP_SUMMARY')
-        if sm:
-            with open(sm, 'a') as fh:
-                fh.write(f"\n### {addon} — {platform} test cases\n\n")
-                fh.write('| Test | ' + ' | '.join(devices) + ' |\n')
+        if not sm:
+            sys.exit(0)
+        icon = {'passed': '✅', 'failed': '❌', 'skipped': '⏭️'}
+        with open(sm, 'a') as fh:
+            # Runner-level summary (compact)
+            if runner_rows:
+                fh.write(f"\n### {addon} — {platform} runners\n\n")
+                fh.write('| Runner | ' + ' | '.join(devices) + ' |\n')
                 fh.write('| --- | ' + ' | '.join(['---'] * len(devices)) + ' |\n')
-                icon = {'passed': '✅', 'failed': '❌', 'skipped': '⏭️', 'errored': '⚠️'}
-                for title in sorted(rows):
+                for title in sorted(runner_rows):
                     cells = []
                     for dv in devices:
-                        r = rows[title].get(dv)
-                        cells.append(icon.get(r['status'], '–') + (f" {r['durationMs']//1000}s" if r and r['status'] not in ('skipped',) and r['durationMs'] else '') if r else '–')
+                        r = runner_rows[title].get(dv)
+                        if not r:
+                            cells.append('–')
+                        else:
+                            ic = icon.get(r['status'], '–')
+                            dur = f" {r['durationMs']//1000}s" if r['status'] not in ('skipped',) and r['durationMs'] else ''
+                            cells.append(f"{ic}{dur}")
                     fh.write(f"| {title} | " + ' | '.join(cells) + ' |\n')
                 fh.write('\n')
+
+            # Individual test() cases (the real detail)
+            if tap_rows:
+                fh.write(f"\n<details><summary>{addon} — {platform} test cases ({case_count} tests)</summary>\n\n")
+                fh.write('| # | Test | ' + ' | '.join(devices) + ' |\n')
+                fh.write('| --- | --- | ' + ' | '.join(['---'] * len(devices)) + ' |\n')
+                for i, name in enumerate(sorted(tap_rows), 1):
+                    cells = []
+                    for dv in devices:
+                        r = tap_rows[name].get(dv)
+                        if not r:
+                            cells.append('–')
+                        else:
+                            ic = icon.get(r['status'], '–')
+                            t = f" {r['timeMs']//1000}s" if r.get('timeMs') and r['status'] != 'skipped' else ''
+                            cells.append(f"{ic}{t}")
+                    fh.write(f"| {i} | {name} | " + ' | '.join(cells) + ' |\n')
+                fh.write('\n</details>\n\n')
         PY
-        echo "found=true" >> "$GITHUB_OUTPUT"
+
+        if [ -f "$OUT_JSON" ]; then
+          echo "found=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "found=false" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Upload console logs
       id: upload_console_log
