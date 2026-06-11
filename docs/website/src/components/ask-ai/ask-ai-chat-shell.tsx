@@ -236,21 +236,26 @@ export function AskAIChatShell() {
           isExpanded
             ? 'inset-4 h-auto w-auto translate-x-0'
             : cn(
-                'left-1/2 -translate-x-1/2',
+                // Span exactly the docs central column by pinning the
+                // bar/modal to that track's left and right edges. The
+                // insets are computed in global.css (see
+                // `--qvac-askai-left` / `--qvac-askai-right`); width then
+                // follows from them, so it always matches the column with
+                // no overflow risk.
+                'left-[var(--qvac-askai-left)]',
+                'right-[var(--qvac-askai-right)]',
                 'bottom-3 sm:bottom-4',
-                'w-[calc(100%-1rem)] sm:w-[min(100%-1.5rem,var(--fd-page-width,900px))]',
                 askAI.modalState === 'open'
                   ? // Desktop: bottom-anchored panel capped at 85% of
                     // the DYNAMIC viewport (`dvh`) so mobile browser
                     // chrome never clips it. Mobile (`max-md`): pin all
                     // four edges with explicit insets and let the
-                    // height fill the gap (`h-auto`); the centering
-                    // transform is cancelled so left/right insets win.
+                    // height fill the gap (`h-auto`).
                     // With `interactiveWidget: resizes-content` the
                     // layout viewport shrinks when the keyboard opens,
                     // so `bottom-2` rides above it instead of being
                     // hidden behind it.
-                    'h-[min(85dvh,720px)] max-md:inset-x-2 max-md:top-2 max-md:bottom-2 max-md:h-auto max-md:w-auto max-md:translate-x-0'
+                    'h-[min(85dvh,720px)] max-md:inset-x-2 max-md:top-2 max-md:bottom-2 max-md:h-auto'
                   : 'h-14',
               ),
           // Fade-out for page bottom (closed state only). The modal
