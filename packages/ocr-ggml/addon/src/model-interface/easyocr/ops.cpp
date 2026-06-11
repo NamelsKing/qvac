@@ -28,14 +28,13 @@ namespace {
 // ggml_mul_mat instead of ggml_conv_2d's im2col + GEMM. A 1x1 conv is a
 // per-pixel linear map over channels, i.e. a plain matmul; skipping im2col
 // avoids materialising the lowered buffer (a notable win on GPU GEMM backends).
-// Read once at first use. Default off until CI perf confirms the win per
-// backend (mirrors the F16 kernel A/B lever).
+// Default off until CI perf confirms the win per backend (mirrors the F16
+// kernel A/B lever). Read via getenv on each call: graph building is not a hot
+// path, and a per-build read keeps the toggle honest when the env is set after
+// the process has already built other graphs (e.g. a single-process test run).
 bool conv1x1_mulmat_enabled() {
-  static const bool enabled = []() {
-    const char* v = std::getenv("OCR_GGML_CONV1X1_MULMAT");
-    return v != nullptr && std::strcmp(v, "1") == 0;
-  }();
-  return enabled;
+  const char* v = std::getenv("OCR_GGML_CONV1X1_MULMAT");
+  return v != nullptr && std::strcmp(v, "1") == 0;
 }
 
 // True for a pointwise (1x1) conv with unit stride/dilation and no padding —
