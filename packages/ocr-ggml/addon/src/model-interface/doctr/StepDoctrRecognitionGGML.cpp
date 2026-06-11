@@ -503,8 +503,9 @@ struct GraphBuilder {
       const std::string& convPrefix, const std::string& bnPrefix, int strideW,
       int strideH, int kernel, bool useHardswish) const {
     // Depthwise via the direct Metal kernel (GGML_OP_CONV_2D_DW) instead of the
-    // im2col + per-channel batched matmul, which is pathologically slow on Metal
-    // (it dominated recognition latency). Weight is [KW,KH,1,C] as required.
+    // im2col + per-channel batched matmul, which is pathologically slow on
+    // Metal (it dominated recognition latency). Weight is [KW,KH,1,C] as
+    // required.
     struct ggml_tensor* conv = ggml_conv_2d_dw_direct(
         ctx,
         t(convPrefix + ".weight"),
@@ -1221,10 +1222,12 @@ private:
           if (static_cast<size_t>(oc) != scale.size()) {
             raise("BN fold: output-channel mismatch for " + convWeightName);
           }
-          const int64_t perOc = wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
+          const int64_t perOc =
+              wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
           const size_t n = static_cast<size_t>(oc * perOc);
           // Pointwise/regular conv weights are F16; depthwise weights are F32
-          // (see isDepthwiseWeight). Fold the per-channel scale in either dtype.
+          // (see isDepthwiseWeight). Fold the per-channel scale in either
+          // dtype.
           if (wTensor->type == GGML_TYPE_F16) {
             std::vector<ggml_fp16_t> wbuf(n);
             ggml_backend_tensor_get(
@@ -1240,8 +1243,7 @@ private:
                 wTensor, wbuf.data(), 0, n * sizeof(ggml_fp16_t));
           } else if (wTensor->type == GGML_TYPE_F32) {
             std::vector<float> wbuf(n);
-            ggml_backend_tensor_get(
-                wTensor, wbuf.data(), 0, n * sizeof(float));
+            ggml_backend_tensor_get(wTensor, wbuf.data(), 0, n * sizeof(float));
             for (int64_t o = 0; o < oc; ++o) {
               const float s = scale[static_cast<size_t>(o)];
               for (int64_t i = 0; i < perOc; ++i) {
@@ -1249,10 +1251,10 @@ private:
                 wbuf[idx] *= s;
               }
             }
-            ggml_backend_tensor_set(
-                wTensor, wbuf.data(), 0, n * sizeof(float));
+            ggml_backend_tensor_set(wTensor, wbuf.data(), 0, n * sizeof(float));
           } else {
-            raise("BN fold: unexpected conv weight dtype for " + convWeightName);
+            raise(
+                "BN fold: unexpected conv weight dtype for " + convWeightName);
           }
         }
       }

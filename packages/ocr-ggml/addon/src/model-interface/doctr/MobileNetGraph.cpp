@@ -365,8 +365,9 @@ struct GraphBuilder {
     struct ggml_tensor* kernelT = t(convPrefix + ".weight");
     const int pad = samePadding(kernel);
     // Direct depthwise kernel (GGML_OP_CONV_2D_DW) — much faster than the
-    // im2col + per-channel batched matmul on GPU backends. Weight is [KW,KH,1,C]
-    // and promoted to F32 (see addConvWeight) so it runs on every backend.
+    // im2col + per-channel batched matmul on GPU backends. Weight is
+    // [KW,KH,1,C] and promoted to F32 (see addConvWeight) so it runs on every
+    // backend.
     struct ggml_tensor* conv =
         ggml_conv_2d_dw_direct(ctx, kernelT, x, stride, stride, pad, pad, 1, 1);
     // BN scale folded into the depthwise weights at load time; `.shift` carries
@@ -979,7 +980,8 @@ WeightsBundle loadWeights(
     }
   };
 
-  auto foldBnWithEps = [&](const std::string& bnPrefix, float eps,
+  auto foldBnWithEps = [&](const std::string& bnPrefix,
+                           float eps,
                            bool foldIntoConv) {
     const size_t n =
         static_cast<size_t>(ggml_nelements(tensors.at(bnPrefix + ".scale")));
@@ -1065,8 +1067,10 @@ WeightsBundle loadWeights(
   // prob_head.0 is a plain 3x3 conv (foldable); prob_head.3/.4 is the
   // sub-pixel transposed conv whose weight is reshaped at graph build, so its
   // BN stays as a runtime scale/shift (applyFoldedBn in convTransposeBnAct).
-  foldBnWithEps("dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
-  foldBnWithEps("dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
+  foldBnWithEps(
+      "dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
+  foldBnWithEps(
+      "dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
 
   // Classifier FC tensors stay FP16 and are copied directly from GGUF bytes.
   // auto uploadClassifierTensor = [&](const std::string& name) {
