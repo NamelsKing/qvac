@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import { cn } from '@/lib/cn';
+import { AskAIShortcutHint } from './ask-ai-button';
 import { AskAIChatMessages } from './ask-ai-chat-messages';
 import { useAskAI } from './ask-ai-provider';
 import type { AskAIContextSnippet } from './types';
@@ -415,6 +416,12 @@ export function AskAIChatShell() {
               className="min-w-0 flex-1 bg-transparent text-sm text-fd-popover-foreground placeholder:text-fd-muted-foreground focus:outline-none"
               disabled={chat.isStreaming}
             />
+            {/* `⌘ I` hint, trailing inside the pill like a search bar's
+                shortcut chip. Only meaningful as a trigger affordance,
+                so it's shown solely in the closed bar (the hotkey is
+                still wired globally in AskAIProvider). The chip itself
+                is desktop-only (`hidden md:inline-flex`). */}
+            {!isModalOpen ? <AskAIShortcutHint className="shrink-0" /> : null}
           </div>
           {chat.isStreaming ? (
             <button
