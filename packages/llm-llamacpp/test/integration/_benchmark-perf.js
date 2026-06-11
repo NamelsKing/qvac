@@ -139,13 +139,23 @@ function benchmarkModel (size, quant, cacheK, cacheV) {
         }
 
         try {
+          // Warm up once per backend, not per reasoning budget. The warm-up
+          // primes the GPU kernels/caches for this loaded model; reasoning
+          // budget is a per-call generation param that does not change the
+          // compute kernels, so one warm-up covers both budgets. It is
+          // discarded, never a measured rep, so the 3 reps and their stddev
+          // are unaffected.
+          try {
+            for (let w = 1; w <= PERF_WARMUP_RUNS; w++) {
+              const { endTime, startTime } = await runInference(addon, PROMPT, REASONING_BUDGETS[0])
+              t.comment(`[${id}] [${device}] warmup ${w}/${PERF_WARMUP_RUNS} (${endTime - startTime}ms) - perf NOT recorded`)
+            }
+          } catch (warmErr) {
+            t.comment(`[${id}] [${device}] warmup failed: ${warmErr && warmErr.message ? warmErr.message : warmErr}`)
+          }
           for (const rb of REASONING_BUDGETS) {
             const label = labelFor(rb)
             try {
-              for (let w = 1; w <= PERF_WARMUP_RUNS; w++) {
-                const { endTime, startTime } = await runInference(addon, PROMPT, rb)
-                t.comment(`${label} warmup ${w}/${PERF_WARMUP_RUNS} (${endTime - startTime}ms) - perf NOT recorded`)
-              }
               for (let run = 1; run <= PERF_RUNS; run++) {
                 const { output, startTime, endTime, stats } = await runInference(addon, PROMPT, rb)
                 // Real metrics supersede the Crashed placeholder in the renderer.
