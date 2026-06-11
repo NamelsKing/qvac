@@ -147,7 +147,16 @@ export function AskAIChatShell() {
   // mid-open animation.
   // -------------------------------------------------------------
   useEffect(() => {
-    if (askAI.modalState === 'closed') return;
+    if (askAI.modalState === 'closed') {
+      // When the modal closes, actively drop focus from the input.
+      // Closing via Esc (or any path that leaves focus on the field)
+      // would otherwise keep `isInputFocused` true, pinning the
+      // trailing control on the active ↑ send state forever. Resetting
+      // here returns the closed bar to its idle ✕ dismiss state.
+      inputRef.current?.blur();
+      setIsInputFocused(false);
+      return;
+    }
     // requestAnimationFrame so the transition has started and the
     // input is interactable.
     const id = requestAnimationFrame(() =>
