@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, FileText } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
 import type { AskAIReference } from './use-ask-ai-chat';
 
@@ -60,36 +60,29 @@ function referenceTitle(reference: AskAIReference): string {
 }
 
 /**
- * Derive the card's breadcrumb (the section the page lives in) straight
- * from the URL path — Inkeep's `provideLinks` payload doesn't carry a
- * reliable section field, but our docs URLs encode it
- * (`/docs/ai-capabilities/video-generation` -> "AI Capabilities"). We
- * drop a leading `docs` prefix and the final page slug; whatever section
- * segments remain become the breadcrumb. Returns `null` when nothing
- * meaningful can be derived (so the card just shows the title).
+ * Display form of a source URL for the card's second line: drop the
+ * scheme and a leading `www.`, plus any trailing slash, so it reads as a
+ * clean `host/path` (e.g. `docs.qvac.tether.io/ai-capabilities/vla`).
+ * Falls back to the raw string if the URL can't be parsed.
  */
-function referenceBreadcrumb(reference: AskAIReference): string | null {
+function formatDisplayUrl(rawUrl: string): string {
   try {
-    const url = new URL(reference.url);
-    const segments = url.pathname.split('/').filter(Boolean);
-    const isDocs = segments[0] === 'docs';
-    const trimmed = isDocs ? segments.slice(1) : segments;
-    const sections = trimmed.slice(0, -1);
-    if (sections.length > 0) return sections.map(formatSegment).join(' / ');
-    if (isDocs) return 'Docs';
-    return url.hostname.replace(/^www\./, '');
+    const url = new URL(rawUrl);
+    const host = url.hostname.replace(/^www\./, '');
+    const path = url.pathname.replace(/\/$/, '');
+    return `${host}${path}${url.search}${url.hash}`;
   } catch {
-    return null;
+    return rawUrl;
   }
 }
 
 /**
  * "Sources" footer shown beneath an assistant answer. Renders the
  * citations Inkeep returned via the `provideLinks` tool as compact,
- * fully-clickable cards (icon + breadcrumb + title) so readers can jump
- * to the underlying docs — mirroring the legacy Inkeep widget's source
- * cards. Renders nothing when there are no references (e.g. while
- * streaming, or for answers with no sources).
+ * fully-clickable cards (icon + title + URL) so readers can jump to the
+ * underlying docs — mirroring the legacy Inkeep widget's source cards.
+ * Renders nothing when there are no references (e.g. while streaming, or
+ * for answers with no sources).
  */
 export function AskAIReferences({ references }: { references: AskAIReference[] }) {
   if (references.length === 0) return null;
@@ -97,37 +90,36 @@ export function AskAIReferences({ references }: { references: AskAIReference[] }
     <div className="mt-3 border-t border-fd-border/60 pt-2.5">
       <p className="mb-1.5 text-xs font-medium text-fd-muted-foreground">Sources</p>
       <ul className="flex flex-col gap-1.5">
-        {references.map((reference) => {
-          const breadcrumb = referenceBreadcrumb(reference);
-          return (
-            <li key={reference.url}>
-              <a
-                href={reference.url}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="group flex items-center gap-2.5 rounded-lg border border-fd-border bg-fd-card px-2.5 py-2 transition-colors hover:bg-fd-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
-              >
-                <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-fd-border bg-fd-popover text-fd-muted-foreground transition-colors group-hover:text-fd-primary">
-                  <FileText className="size-3.5" aria-hidden="true" />
+        {references.map((reference, index) => (
+          <li key={reference.url}>
+            <a
+              href={reference.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="group flex items-center gap-2.5 rounded-lg border border-fd-border bg-fd-card px-2.5 py-2 transition-colors hover:bg-fd-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
+            >
+              {/* Numbered badge — matches the inline citation numbers in
+                  the answer (1-based, in the order Inkeep returned the
+                  links), so readers can map each "(n)" in the text to its
+                  source card like footnotes in a paper. */}
+              <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-fd-border bg-fd-popover text-xs font-medium tabular-nums text-fd-muted-foreground transition-colors group-hover:border-fd-primary/40 group-hover:text-fd-primary">
+                {index + 1}
+              </span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="truncate text-xs font-medium text-fd-popover-foreground">
+                  {referenceTitle(reference)}
                 </span>
-                <span className="flex min-w-0 flex-col">
-                  {breadcrumb ? (
-                    <span className="truncate text-[0.7rem] leading-tight text-fd-muted-foreground">
-                      {breadcrumb}
-                    </span>
-                  ) : null}
-                  <span className="truncate text-xs font-medium text-fd-popover-foreground">
-                    {referenceTitle(reference)}
-                  </span>
+                <span className="truncate text-[0.7rem] leading-snug text-fd-muted-foreground">
+                  {formatDisplayUrl(reference.url)}
                 </span>
-                <ExternalLink
-                  className="ml-auto size-3 shrink-0 text-fd-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                  aria-hidden="true"
-                />
-              </a>
-            </li>
-          );
-        })}
+              </span>
+              <ExternalLink
+                className="ml-auto size-3 shrink-0 text-fd-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                aria-hidden="true"
+              />
+            </a>
+          </li>
+        ))}
       </ul>
     </div>
   );
