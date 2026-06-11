@@ -219,7 +219,26 @@ export function AskAIChatShell() {
         // grabbing focus while invisible.
         inert={!isModalOpen && barChromeHidden ? true : undefined}
         className={cn(
-          'fixed flex flex-col overflow-hidden rounded-2xl border bg-fd-popover text-fd-popover-foreground shadow-2xl',
+          'fixed flex flex-col rounded-2xl border text-fd-popover-foreground',
+          // Panel chrome (surface + outline + float shadow) is applied
+          // ONLY when the modal is open. When closed, the wrapper is
+          // fully transparent so the single visible element is the
+          // inner input pill below — the surrounding box becomes an
+          // invisible structural container that exists purely to drive
+          // the height (unroll) animation while the pill stays static.
+          // The chrome fades in alongside the unroll (see the
+          // background-color / border-color / box-shadow entries in the
+          // transition list below). Border WIDTH stays constant (1px)
+          // across states — only its color toggles — so there's no
+          // layout shift when the surface appears.
+          isModalOpen
+            ? 'border-fd-border bg-fd-popover shadow-2xl'
+            : 'border-transparent bg-transparent shadow-none',
+          // Clip the growing content to the rounded panel while open.
+          // When closed, stay `overflow-visible` so the pill's float
+          // shadow can extend past the (transparent) wrapper instead of
+          // being cropped by it.
+          isModalOpen ? 'overflow-hidden' : 'overflow-visible',
           // Stacking: when the modal is OPEN we sit above everything
           // (`z-50`), including the Fumadocs notebook mobile drawer
           // (which uses `z-40`). When the modal is CLOSED — i.e. only
@@ -228,7 +247,7 @@ export function AskAIChatShell() {
           // render on top of us; otherwise the bar covers the social
           // icons at the end of the menu.
           isModalOpen ? 'z-50' : 'z-30',
-          'transition-[height,inset,opacity,transform] duration-300 ease-out',
+          'transition-[height,inset,opacity,transform,background-color,border-color,box-shadow] duration-300 ease-out',
           // Geometry per state. Width is the same in `closed` and
           // `open` (the bar and modal align edge-to-edge - that's
           // the "bottom bar same width as modal" rule). `expanded`
@@ -373,7 +392,13 @@ export function AskAIChatShell() {
           <div
             className={cn(
               'flex flex-1 items-center gap-2 rounded-full border border-fd-border bg-fd-background px-3 py-1.5',
-              'transition-colors focus-within:border-fd-ring focus-within:ring-1 focus-within:ring-fd-ring',
+              'transition-[border-color,box-shadow] focus-within:border-fd-ring focus-within:ring-1 focus-within:ring-fd-ring',
+              // The pill carries the floating shadow ONLY when the panel
+              // chrome is hidden (closed bar), so the bottom bar still
+              // reads as a floating element on its own. Once the modal
+              // opens, the pill sits on the panel surface, so the shadow
+              // is dropped to avoid a shadow-on-shadow look.
+              !isModalOpen ? 'shadow-lg' : 'shadow-none',
             )}
           >
             <Sparkles

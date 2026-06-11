@@ -4,6 +4,7 @@ import { Check, Copy, Sparkles, User } from 'lucide-react';
 import {
   isValidElement,
   useCallback,
+  useEffect,
   useState,
   type ReactElement,
   type ReactNode,
@@ -27,7 +28,18 @@ import type { ChatMessage } from './use-ask-ai-chat';
  * own max-width so long messages wrap without horizontally
  * stretching the modal.
  */
-export function AskAIChatMessage({ message }: { message: ChatMessage }) {
+export function AskAIChatMessage({
+  message,
+  isWaiting = false,
+}: {
+  message: ChatMessage;
+  /**
+   * Assistant placeholder is on screen but no tokens have streamed in
+   * yet — render the cycling "waiting" indicator instead of the (empty)
+   * markdown body.
+   */
+  isWaiting?: boolean;
+}) {
   const isUser = message.role === 'user';
   return (
     <div
@@ -53,6 +65,8 @@ export function AskAIChatMessage({ message }: { message: ChatMessage }) {
           // Preserve the user's whitespace (including newlines from
           // pasted snippets) without invoking the markdown parser.
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : isWaiting ? (
+          <AssistantTypingDots />
         ) : (
           <>
             <MarkdownBody content={message.content} />
@@ -62,6 +76,69 @@ export function AskAIChatMessage({ message }: { message: ChatMessage }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-dot animation start offset (ms) for the bouncing typing
+ * indicator, so the three dots crest in sequence rather than together.
+ */
+const TYPING_DOT_DELAYS = [0, 180, 360] as const;
+
+/**
+ * Phases the label cycles through while waiting for the first assistant
+ * token. Mirrors the three states Inkeep's widget surfaced (Thinking →
+ * Looking for content → Analyzing).
+ */
+const WAITING_LABELS = ['Thinking', 'Looking for content', 'Analyzing'] as const;
+const WAITING_LABEL_INTERVAL_MS = 3000;
+
+/**
+ * "Waiting" indicator rendered inside the assistant bubble between the
+ * user's submission and the first streamed token: a cycling label
+ * ("Thinking / Looking for content / Analyzing") followed by three dots
+ * that bounce in sequence, like a classic messenger "typing…" bubble.
+ * The vertical bounce is driven by the `qvac-typing-dot` keyframe (see
+ * global.css); the per-dot stagger comes from an inline `animation-delay`
+ * so it never depends on utility ordering. A single `sr-only` label
+ * gives screen readers stable feedback without re-announcing each phase.
+ */
+function AssistantTypingDots() {
+  const [labelIndex, setLabelIndex] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setLabelIndex((current) => (current + 1) % WAITING_LABELS.length);
+    }, WAITING_LABEL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return (
+    <div
+      role="status"
+      className="flex items-baseline gap-2 py-1.5 text-sm text-fd-muted-foreground"
+    >
+      <span className="sr-only">Generating answer…</span>
+      {/* The dots are literal "." glyphs (not CSS circles), so they
+          inherit the exact font, size and color of the label — the dot
+          size is, by definition, the font's period. They read as a
+          spaced "Thinking . . ." (double-space gap from the label and
+          between each dot) and bounce on the text baseline. */}
+      <span aria-hidden="true" className="inline-flex items-baseline gap-2">
+        <span>{WAITING_LABELS[labelIndex]}</span>
+        <span className="inline-flex items-baseline gap-2">
+          {TYPING_DOT_DELAYS.map((delay) => (
+            <span
+              key={delay}
+              className="qvac-typing-dot inline-block leading-none"
+              style={{ animationDelay: `${delay}ms` }}
+            >
+              .
+            </span>
+          ))}
+        </span>
+      </span>
     </div>
   );
 }
