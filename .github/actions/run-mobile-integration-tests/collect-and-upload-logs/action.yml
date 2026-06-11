@@ -270,20 +270,20 @@ runs:
                             continue
                         seen.add(key)
                         # Parse name, timing, skip
-                        name = rest
+                        name = rest.rstrip("'\"")  # strip ReactNativeJS quote wrapper
                         time_ms = None
                         status = 'passed' if passed else 'failed'
-                        if '# SKIP' in rest:
+                        if '# SKIP' in name:
                             status = 'skipped'
-                            name = rest.split('# SKIP')[0].strip()
-                        elif '# time =' in rest:
-                            tp = re.search(r'# time = ([\d.]+)ms', rest)
+                            name = name.split('# SKIP')[0].strip()
+                        elif '# time =' in name:
+                            tp = re.search(r'# time = ([\d.]+)ms', name)
                             if tp:
                                 time_ms = round(float(tp.group(1)))
-                            name = rest.split('# time')[0].strip()
+                            name = name.split('# time')[0].strip()
                         elif not passed:
                             # "not ok N - name: error message"
-                            parts = rest.split(':', 1)
+                            parts = name.split(':', 1)
                             name = parts[0].strip()
                         tests.append({
                             'num': num, 'name': name,
