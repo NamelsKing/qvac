@@ -1188,11 +1188,19 @@ private:
         if (it != graph.weights.end()) {
           struct ggml_tensor* wTensor = it->second;
           if (wTensor->type != GGML_TYPE_F16) {
-            raise("BN fold: expected F16 conv weight for " + convWeightName);
+            raise(
+                "BN fold: unsupported conv weight dtype " +
+                std::string(ggml_type_name(wTensor->type)) + " for " +
+                convWeightName +
+                " (expected F16; quantized weights are not supported by the BN "
+                "fold)");
           }
           const int64_t oc = wTensor->ne[3];
           if (static_cast<size_t>(oc) != scale.size()) {
-            raise("BN fold: output-channel mismatch for " + convWeightName);
+            raise(
+                "BN fold: output-channel mismatch for " + convWeightName +
+                ": conv oc=" + std::to_string(oc) +
+                ", BN scale size=" + std::to_string(scale.size()));
           }
           const int64_t perOc =
               wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
@@ -1204,6 +1212,8 @@ private:
             const float s = scale[static_cast<size_t>(o)];
             for (int64_t i = 0; i < perOc; ++i) {
               const size_t idx = static_cast<size_t>((o * perOc) + i);
+              // F16 has no arithmetic: decode to F32, apply the per-channel
+              // scale, then re-encode. Stays F16-stored (not an f16->f16 copy).
               wbuf[idx] = ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
             }
           }
