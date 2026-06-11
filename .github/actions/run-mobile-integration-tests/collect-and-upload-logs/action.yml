@@ -219,6 +219,23 @@ runs:
 
         console_dir, out_json, platform, addon = sys.argv[1:5]
 
+        def normalize_test_name(name):
+            """Collapse dynamic values so the same logical test merges across devices.
+            e.g. 'CacheTokens (53) > 0' and 'CacheTokens (55) > 0' both become
+            'CacheTokens (N) > 0'."""
+            # Replace parenthesized integers: (53) -> (N)
+            name = re.sub(r'\(\d+\)', '(N)', name)
+            # Replace standalone large numbers that look like token counts: 538 -> N
+            name = re.sub(r'\b\d{2,}\b', 'N', name)
+            return name.strip()
+
+        def escape_md(text):
+            """Escape characters that break markdown table cells."""
+            text = text.replace('|', '\\|')
+            text = text.replace('<', '&lt;').replace('>', '&gt;')
+            text = text.replace('`', "'")
+            return text
+
         def device_label(filename):
             """Extract a readable device name from the artifact filename."""
             base = os.path.basename(filename).rsplit('.', 1)[0]
@@ -310,10 +327,14 @@ runs:
             devices.add(dev)
             tests = parse_tap_from_file(f)
             for t in tests:
-                tap_rows.setdefault(t['name'], {})[dev] = {
-                    'status': t['status'],
-                    'timeMs': t['timeMs']
-                }
+                normalized = normalize_test_name(t['name'])
+                existing = tap_rows.get(normalized, {}).get(dev)
+                # Keep the first result per device (skip duplicates from normalization)
+                if existing is None:
+                    tap_rows.setdefault(normalized, {})[dev] = {
+                        'status': t['status'],
+                        'timeMs': t['timeMs']
+                    }
 
         devices = sorted(devices)
         summary = {
@@ -357,7 +378,7 @@ runs:
                             ic = icon.get(r['status'], '–')
                             dur = f" {r['durationMs']//1000}s" if r['status'] not in ('skipped',) and r['durationMs'] else ''
                             cells.append(f"{ic}{dur}")
-                    fh.write(f"| {title} | " + ' | '.join(cells) + ' |\n')
+                    fh.write(f"| {escape_md(title)} | " + ' | '.join(cells) + ' |\n')
                 fh.write('\n')
 
             # Individual test() cases (the real detail)
@@ -375,7 +396,7 @@ runs:
                             ic = icon.get(r['status'], '–')
                             t = f" {r['timeMs']//1000}s" if r.get('timeMs') and r['status'] != 'skipped' else ''
                             cells.append(f"{ic}{t}")
-                    fh.write(f"| {i} | {name} | " + ' | '.join(cells) + ' |\n')
+                    fh.write(f"| {i} | {escape_md(name)} | " + ' | '.join(cells) + ' |\n')
                 fh.write('\n</details>\n\n')
         PY
 
