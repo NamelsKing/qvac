@@ -317,5 +317,8 @@
       "optional": true
     }
   },
-  "patchedDependencies": {}
+  "patchedDependencies": {},
+  "overrides": {
+    "bare-module-lexer": "1.5.0"
+  }
 }
