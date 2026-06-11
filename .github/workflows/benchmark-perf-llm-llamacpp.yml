@@ -480,7 +480,7 @@ jobs:
           # The desktop device name (incl. GPU) comes from the stamped
           # desktop-meta.json inside the sweep artifact, so it's correct on
           # re-renders too; no --desktop-device needed here.
-          ARGS=(--dir combined-reports --output benchmark-artifacts/qwen35-benchmark-findings.md)
+          ARGS=(--dir combined-reports --output benchmark-artifacts/qwen35-benchmark-findings.md --html benchmark-artifacts/qwen35-benchmark-charts.html)
           if [ -n "$ADDON_VERSION" ]; then
             ARGS+=(--addon-version "$ADDON_VERSION")
           fi

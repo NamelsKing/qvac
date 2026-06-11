@@ -24,6 +24,7 @@ function parseArgs (argv) {
   const a = {
     dir: null,
     output: null,
+    html: null,
     desktopDevice: 'Desktop (linux-x64 GPU)',
     addonVersion: null,
     compareDir: null,
@@ -35,6 +36,7 @@ function parseArgs (argv) {
     const t = argv[i]
     if (t === '--dir') a.dir = argv[++i]
     else if (t === '--output') a.output = argv[++i]
+    else if (t === '--html') a.html = argv[++i]
     else if (t === '--desktop-device') a.desktopDevice = argv[++i]
     else if (t === '--addon-version') a.addonVersion = argv[++i]
     else if (t === '--compare-dir') a.compareDir = argv[++i]
@@ -364,6 +366,69 @@ function coverageLines (rows, desktopDevice, devices) {
   return lines
 }
 
+function shortDevice (name) {
+  return name.replace(/^Apple /, '').replace(/^Samsung Galaxy /, '').replace(/^Google /, '')
+}
+
+// Mean of a metric over mobile (non-desktop, non-crashed) rows, grouped by keyFn.
+function avgByMobile (rows, desktopDevice, keyFn, metric) {
+  const g = new Map()
+  for (const r of rows) {
+    if (r.device === desktopDevice || r.crashed || r[metric] === null) continue
+    const k = keyFn(r)
+    if (k == null) continue
+    if (!g.has(k)) g.set(k, [])
+    g.get(k).push(r[metric])
+  }
+  const o = new Map()
+  for (const [k, v] of g) o.set(k, mean(v))
+  return o
+}
+
+function mermaidBar (title, ylabel, labels, values) {
+  const max = Math.ceil(Math.max(...values, 1) * 1.15)
+  return [
+    '```mermaid',
+    'xychart-beta',
+    `    title "${title}"`,
+    `    x-axis [${labels.map(l => `"${l}"`).join(', ')}]`,
+    `    y-axis "${ylabel}" 0 --> ${max}`,
+    `    bar [${values.map(v => Math.round(v * 10) / 10).join(', ')}]`,
+    '```'
+  ]
+}
+
+// At-a-glance Mermaid bar charts embedded in the markdown so they render inline
+// in the GitHub UI (xychart-beta is single-series, so devices rank in one chart
+// and the KV-cache/quant comparison is shown for the fastest device). The full
+// per-device grouped charts with stddev error bars live in the HTML artifact.
+function mermaidSection (rows, desktopDevice) {
+  const byDevice = avgByMobile(rows, desktopDevice, r => r.device, 'tps')
+  if (!byDevice.size) return []
+  const devices = [...byDevice.keys()]
+  const lines = ['## Charts', '']
+  lines.push('> Quick at-a-glance bars. Download the **qwen35-benchmark-charts.html** artifact for the full per-device grouped charts with stddev error bars.', '')
+  lines.push('### Decode throughput (TPS) by device', '')
+  lines.push(...mermaidBar('Decode TPS by device', 'TPS', devices.map(shortDevice), devices.map(d => byDevice.get(d))), '')
+  const top = devices.reduce((a, b) => (byDevice.get(b) > byDevice.get(a) ? b : a))
+  const topRows = rows.filter(r => r.device === top)
+  const KVO = ['f16', 'q8_0', 'q4_0', 'tbq3_0/pq3_0', 'tbq4_0/pq4_0', 'pq3_0', 'pq4_0']
+  const QO = ['Q4_0', 'Q4_1', 'Q4_K_M', 'Q6_K', 'Q8_0']
+  const kvMap = avgByMobile(topRows, desktopDevice, r => rowKv(r.config), 'tps')
+  const kvCats = KVO.filter(c => kvMap.has(c))
+  if (kvCats.length > 1) {
+    lines.push(`### Decode throughput (TPS) by KV-cache type (${shortDevice(top)})`, '')
+    lines.push(...mermaidBar(`TPS by KV-cache type (${shortDevice(top)})`, 'TPS', kvCats, kvCats.map(c => kvMap.get(c))), '')
+  }
+  const qMap = avgByMobile(topRows, desktopDevice, r => rowQuant(r.config), 'tps')
+  const qCats = QO.filter(c => qMap.has(c))
+  if (qCats.length > 1) {
+    lines.push(`### Decode throughput (TPS) by quantization (${shortDevice(top)})`, '')
+    lines.push(...mermaidBar(`TPS by quantization (${shortDevice(top)})`, 'TPS', qCats, qCats.map(c => qMap.get(c))), '')
+  }
+  return lines
+}
+
 function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseline) {
   const byDevice = new Map()
   for (const r of rows) {
@@ -428,6 +493,8 @@ function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseli
   lines.push('')
 
   for (const l of coverageLines(rows, desktopDevice, devices)) lines.push(l)
+
+  for (const l of mermaidSection(rows, desktopDevice)) lines.push(l)
 
   const hasTokens = rows.some(r => r.tokens !== null)
 
@@ -506,6 +573,92 @@ function render (rows, desktopDevice, meta, addonVersionArg, baselineMap, baseli
   return lines.join('\n') + '\n'
 }
 
+// ── Visual HTML report: self-contained inline SVG bar charts, no deps or CDN ──
+const CHART_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777']
+
+function rowQuant (config) {
+  const m = /^\[qwen[\d.]+-[^-\]]+-([^\]]+)\]/i.exec(config)
+  return m ? m[1] : null
+}
+
+function rowKv (config) {
+  const m = /\[kv=([^\]]+)\]/.exec(config)
+  return m ? m[1] : null
+}
+
+// Aggregate a metric over mobile rows, grouped by a category (kv or quant) on the
+// x-axis with one bar per device. Each cell is mean +/- stddev across the rows
+// sharing (device, category) — i.e. averaged over the other matrix axes.
+function chartSeries (rows, desktopDevice, byKey, order, metric) {
+  const pts = rows.filter(r => r.device !== desktopDevice && !r.crashed && r[metric] !== null && byKey(r.config) !== null)
+  const present = new Set(pts.map(r => byKey(r.config)))
+  const cats = order.filter(c => present.has(c))
+  const devices = [...new Set(pts.map(r => r.device))].sort()
+  const series = devices.map((dev, i) => ({
+    name: dev,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+    cells: cats.map(cat => {
+      const vals = pts.filter(r => r.device === dev && byKey(r.config) === cat).map(r => r[metric])
+      return vals.length ? { mean: mean(vals), std: stddev(vals) } : null
+    })
+  }))
+  return { cats, series }
+}
+
+function svgBarChart (title, unit, cats, series) {
+  const W = 860; const H = 360
+  const m = { l: 64, r: 16, t: 16, b: 70 }
+  const pw = W - m.l - m.r; const ph = H - m.t - m.b
+  let max = 0
+  for (const s of series) for (const c of s.cells) if (c) max = Math.max(max, c.mean + (c.std || 0))
+  const niceMax = (max > 0 ? max : 1) * 1.1
+  const y = v => m.t + ph - (v / niceMax) * ph
+  const out = ['<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet" font-family="system-ui,Arial" font-size="12">']
+  for (let g = 0; g <= 4; g++) {
+    const v = (niceMax / 4) * g; const yy = y(v)
+    out.push(`<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="#e5e7eb"/>`)
+    out.push(`<text x="${m.l - 6}" y="${(yy + 4).toFixed(1)}" text-anchor="end" fill="#6b7280">${fmt(v, v < 10 ? 1 : 0)}</text>`)
+  }
+  const groupW = pw / cats.length
+  const barW = (groupW * 0.74) / series.length
+  cats.forEach((cat, ci) => {
+    const gx = m.l + ci * groupW + groupW * 0.13
+    series.forEach((s, si) => {
+      const cell = s.cells[ci]
+      if (!cell) return
+      const bx = gx + si * barW
+      const by = y(cell.mean)
+      out.push(`<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${(barW * 0.92).toFixed(1)}" height="${Math.max(0, m.t + ph - by).toFixed(1)}" fill="${s.color}"><title>${s.name} | ${cat}: ${fmt(cell.mean)} ${unit}</title></rect>`)
+      if (cell.std) {
+        const cx = (bx + barW * 0.46).toFixed(1)
+        out.push(`<line x1="${cx}" y1="${y(cell.mean + cell.std).toFixed(1)}" x2="${cx}" y2="${y(Math.max(0, cell.mean - cell.std)).toFixed(1)}" stroke="#1f2937"/>`)
+      }
+    })
+    out.push(`<text x="${(gx + groupW * 0.37).toFixed(1)}" y="${m.t + ph + 18}" text-anchor="middle" fill="#111827">${cat}</text>`)
+  })
+  out.push('</svg>')
+  return `<figure style="margin:0 0 26px"><figcaption style="font-weight:600;margin:0 0 4px">${title} <span style="font-weight:400;color:#6b7280">(${unit})</span></figcaption>${out.join('')}</figure>`
+}
+
+function renderHtml (rows, desktopDevice, meta, addonVersionArg) {
+  const addonVersion = meta.addonVersion || addonVersionArg || ''
+  const devices = [...new Set(rows.filter(r => r.device !== desktopDevice && !r.crashed).map(r => r.device))].sort()
+  const legend = devices.map((d, i) => `<span style="display:inline-flex;align-items:center;margin:0 14px 6px 0"><span style="width:12px;height:12px;background:${CHART_COLORS[i % CHART_COLORS.length]};display:inline-block;margin-right:5px;border-radius:2px"></span>${d}</span>`).join('')
+  const KVO = ['f16', 'q8_0', 'q4_0', 'tbq3_0/pq3_0', 'tbq4_0/pq4_0', 'pq3_0', 'pq4_0']
+  const QO = ['Q4_0', 'Q4_1', 'Q4_K_M', 'Q6_K', 'Q8_0']
+  const charts = [
+    ['Decode throughput by KV-cache type', 'TPS, tokens/sec', rowKv, KVO, 'tps'],
+    ['Decode throughput by quantization', 'TPS, tokens/sec', rowQuant, QO, 'tps'],
+    ['Prefill throughput by KV-cache type', 'ppTPS, tokens/sec', rowKv, KVO, 'ppTps'],
+    ['Time to first token by KV-cache type', 'TTFT, ms (lower is better)', rowKv, KVO, 'ttft']
+  ].map(([title, unit, byKey, order, metric]) => {
+    const { cats, series } = chartSeries(rows, desktopDevice, byKey, order, metric)
+    return cats.length ? svgBarChart(title, unit, cats, series) : ''
+  }).join('')
+  const metaBits = [addonVersion && `Addon <code>${addonVersion}</code>`, meta.promptTokens && `Prompt ${meta.promptTokens} tok`].filter(Boolean).join(' &middot; ')
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Qwen3.5 Benchmark Charts</title></head><body style="max-width:920px;margin:24px auto;padding:0 16px;font-family:system-ui,Arial;color:#111827"><h1 style="font-size:20px;margin-bottom:2px">Qwen3.5 Benchmark Charts</h1><p style="color:#6b7280;margin-top:0">${metaBits}</p><p style="color:#374151">Bars are the mean across the other matrix axes (quantization, reasoning budget, gpu/cpu); the thin line is &plusmn;1 stddev. Mobile devices only.</p><div style="margin:8px 0 20px">${legend}</div>${charts || '<p>No mobile data to chart.</p>'}</body></html>`
+}
+
 function main () {
   const args = parseArgs(process.argv)
 
@@ -554,6 +707,8 @@ function main () {
   const md = render(rows, desktopDevice, meta, args.addonVersion, baselineMap, baseline)
   if (args.output) fs.writeFileSync(args.output, md)
   else process.stdout.write(md)
+
+  if (args.html) fs.writeFileSync(args.html, renderHtml(rows, desktopDevice, meta, args.addonVersion))
 }
 
 main()
