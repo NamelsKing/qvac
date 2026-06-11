@@ -240,7 +240,17 @@ export function AskAIChatShell() {
                 'bottom-3 sm:bottom-4',
                 'w-[calc(100%-1rem)] sm:w-[min(100%-1.5rem,var(--fd-page-width,900px))]',
                 askAI.modalState === 'open'
-                  ? 'h-[min(85vh,720px)] max-md:h-[calc(100vh-1rem)] max-md:inset-x-2 max-md:bottom-2 max-md:top-2 max-md:w-auto'
+                  ? // Desktop: bottom-anchored panel capped at 85% of
+                    // the DYNAMIC viewport (`dvh`) so mobile browser
+                    // chrome never clips it. Mobile (`max-md`): pin all
+                    // four edges with explicit insets and let the
+                    // height fill the gap (`h-auto`); the centering
+                    // transform is cancelled so left/right insets win.
+                    // With `interactiveWidget: resizes-content` the
+                    // layout viewport shrinks when the keyboard opens,
+                    // so `bottom-2` rides above it instead of being
+                    // hidden behind it.
+                    'h-[min(85dvh,720px)] max-md:inset-x-2 max-md:top-2 max-md:bottom-2 max-md:h-auto max-md:w-auto max-md:translate-x-0'
                   : 'h-14',
               ),
           // Fade-out for page bottom (closed state only). The modal
@@ -346,8 +356,13 @@ export function AskAIChatShell() {
             'mt-auto flex flex-none items-center gap-2 px-3 py-2.5',
             // When modal is open we add a top border so the input
             // visually separates from the messages above. When
-            // closed there's nothing above, so no border.
-            isModalOpen ? 'border-t border-fd-border' : '',
+            // closed there's nothing above, so no border. On mobile
+            // the open modal reaches near the viewport edge, so pad
+            // the bottom by the iOS home-indicator safe area (never
+            // less than the default py) to keep the input tappable.
+            isModalOpen
+              ? 'border-t border-fd-border max-md:pb-[max(0.625rem,env(safe-area-inset-bottom))]'
+              : '',
           )}
         >
           <div
