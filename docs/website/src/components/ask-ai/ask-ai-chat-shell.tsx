@@ -68,6 +68,16 @@ export function AskAIChatShell() {
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isPageBottom, setIsPageBottom] = useState(false);
+  // Whether the closed bar's input currently has focus. Drives the
+  // trailing-button morph (idle ✕ dismiss <-> active ↑ send).
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  // Session dismissal of the closed bar. Plain in-memory state on
+  // purpose: it survives client-side navigation (the shell lives in
+  // the persistent `(docs)` layout, so it never remounts between docs
+  // pages) but resets on a full page reload — exactly the "closed for
+  // the session, comes back on hard reload" behaviour we want. Do NOT
+  // persist this to storage or reloads would no longer restore the bar.
+  const [dismissed, setDismissed] = useState(false);
 
   const isModalOpen = askAI.modalState !== 'closed';
   const isExpanded = askAI.modalState === 'expanded';
@@ -177,11 +187,26 @@ export function AskAIChatShell() {
     [askAI, chat],
   );
 
-  // The bar is hidden when the modal is open OR when the user has
-  // scrolled to the page bottom. We don't unmount the container in
-  // either case - the input must remain in the DOM so React can
-  // preserve its focus across the transition.
-  const barChromeHidden = isModalOpen || isPageBottom;
+  // The bar is hidden when the modal is open, when the user has
+  // scrolled to the page bottom, OR when it has been dismissed for the
+  // session. We don't unmount the container in any case - the input
+  // must remain in the DOM so React can preserve its focus across the
+  // transition, AND so the modal can still open from other triggers
+  // (⌘I, top-nav button, code-block "Ask AI", deep links) even after
+  // the closed bar was dismissed. Dismiss therefore only suppresses
+  // the *closed* bar; opening the modal always reveals the shell.
+  const barChromeHidden = isModalOpen || isPageBottom || dismissed;
+
+  // The trailing ✕ "dismiss" control replaces the send arrow only in
+  // the idle closed bar: not while the modal is open, not while a
+  // response is streaming, not while the field is focused, and not
+  // while there's a draft to send. Otherwise the slot stays a send /
+  // stop button (keep-arrow-with-draft was the chosen behaviour).
+  const showDismiss =
+    !isModalOpen &&
+    !chat.isStreaming &&
+    !isInputFocused &&
+    chat.input.trim().length === 0;
 
   return (
     <>
@@ -278,9 +303,10 @@ export function AskAIChatShell() {
                     'h-[min(85dvh,720px)] max-md:inset-x-2 max-md:top-2 max-md:bottom-2 max-md:h-auto'
                   : 'h-14',
               ),
-          // Fade-out for page bottom (closed state only). The modal
-          // open path always has full opacity.
-          !isModalOpen && isPageBottom
+          // Fade-out for page bottom or session dismissal (closed state
+          // only). The modal open path always has full opacity, so the
+          // assistant can still be summoned from other triggers.
+          !isModalOpen && (isPageBottom || dismissed)
             ? 'pointer-events-none translate-y-4 opacity-0'
             : '',
         )}
@@ -411,6 +437,8 @@ export function AskAIChatShell() {
               type="text"
               value={chat.input}
               onChange={(event) => chat.setInput(event.target.value)}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
               placeholder={isModalOpen ? 'Ask a follow-up…' : 'Ask AI a question…'}
               aria-label="Ask the AI assistant"
               className="min-w-0 flex-1 bg-transparent text-sm text-fd-popover-foreground placeholder:text-fd-muted-foreground focus:outline-none"
@@ -423,6 +451,12 @@ export function AskAIChatShell() {
                 is desktop-only (`hidden md:inline-flex`). */}
             {!isModalOpen ? <AskAIShortcutHint className="shrink-0" /> : null}
           </div>
+          {/* Trailing control — a single slot with three states:
+               1. streaming  → ◼ stop
+               2. idle bar    → ✕ dismiss (closed, blurred, empty draft)
+               3. otherwise   → ↑ send
+              The ✕ is a muted/secondary control so it doesn't read as a
+              primary action; ↑ keeps the filled-primary CTA styling. */}
           {chat.isStreaming ? (
             <button
               type="button"
@@ -431,6 +465,16 @@ export function AskAIChatShell() {
               className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-fd-border bg-fd-secondary text-fd-secondary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
             >
               <span aria-hidden="true" className="size-2.5 rounded-sm bg-current" />
+            </button>
+          ) : showDismiss ? (
+            <button
+              type="button"
+              onClick={() => setDismissed(true)}
+              aria-label="Dismiss the assistant bar for this session"
+              title="Dismiss for this session"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
+            >
+              <X className="size-4" aria-hidden="true" />
             </button>
           ) : (
             <button

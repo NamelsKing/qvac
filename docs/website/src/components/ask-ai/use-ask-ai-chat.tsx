@@ -86,6 +86,8 @@ function parseProvideLinks(argsJson: string): AskAIReference[] {
     references.push({
       url,
       title: typeof link.title === 'string' ? link.title : undefined,
+      description:
+        typeof link.description === 'string' ? link.description : undefined,
       label: typeof link.label === 'string' ? link.label : undefined,
       type: typeof link.type === 'string' ? link.type : undefined,
     });
@@ -103,6 +105,7 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export interface AskAIReference {
   url: string;
   title?: string;
+  description?: string;
   label?: string;
   type?: string;
 }
