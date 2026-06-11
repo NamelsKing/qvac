@@ -1194,7 +1194,8 @@ private:
           if (static_cast<size_t>(oc) != scale.size()) {
             raise("BN fold: output-channel mismatch for " + convWeightName);
           }
-          const int64_t perOc = wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
+          const int64_t perOc =
+              wTensor->ne[0] * wTensor->ne[1] * wTensor->ne[2];
           const size_t n = static_cast<size_t>(oc * perOc);
           std::vector<ggml_fp16_t> wbuf(n);
           ggml_backend_tensor_get(
@@ -1203,8 +1204,7 @@ private:
             const float s = scale[static_cast<size_t>(o)];
             for (int64_t i = 0; i < perOc; ++i) {
               const size_t idx = static_cast<size_t>((o * perOc) + i);
-              wbuf[idx] =
-                  ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
+              wbuf[idx] = ggml_fp32_to_fp16(ggml_fp16_to_fp32(wbuf[idx]) * s);
             }
           }
           ggml_backend_tensor_set(

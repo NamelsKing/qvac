@@ -952,7 +952,8 @@ WeightsBundle loadWeights(
     }
   };
 
-  auto foldBnWithEps = [&](const std::string& bnPrefix, float eps,
+  auto foldBnWithEps = [&](const std::string& bnPrefix,
+                           float eps,
                            bool foldIntoConv) {
     const size_t n =
         static_cast<size_t>(ggml_nelements(tensors.at(bnPrefix + ".scale")));
@@ -1038,8 +1039,10 @@ WeightsBundle loadWeights(
   // prob_head.0 is a plain 3x3 conv (foldable); prob_head.3/.4 is the
   // sub-pixel transposed conv whose weight is reshaped at graph build, so its
   // BN stays as a runtime scale/shift (applyFoldedBn in convTransposeBnAct).
-  foldBnWithEps("dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
-  foldBnWithEps("dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
+  foldBnWithEps(
+      "dbnet.prob_head.1", dbnetBatchNormEpsilon, /*foldIntoConv=*/true);
+  foldBnWithEps(
+      "dbnet.prob_head.4", dbnetBatchNormEpsilon, /*foldIntoConv=*/false);
 
   // Classifier FC tensors stay FP16 and are copied directly from GGUF bytes.
   // auto uploadClassifierTensor = [&](const std::string& name) {
