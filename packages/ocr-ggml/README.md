@@ -262,6 +262,21 @@ model is loaded; only the exact value `1` applies; `_F32` wins if both are set):
 These are useful for A/B-benchmarking the F16 fast path or bisecting an accuracy
 regression. None of them affect the DocTR pipeline.
 
+### 1×1 conv path (`OCR_GGML_CONV1X1_MULMAT`)
+
+A 1×1 convolution is a per-pixel linear map over channels — i.e. a plain matrix
+multiply. By default the EasyOCR pipeline runs every conv through
+`ggml_conv_2d` (im2col → GEMM). Setting `OCR_GGML_CONV1X1_MULMAT=1` routes the
+**1×1, stride-1, no-padding** convolutions through a direct `ggml_mul_mat`
+instead, skipping the im2col lowering. This mainly targets the CRAFT detector's
+1×1 convs (the `upconv*.conv.0` legs, `basenet.slice5.2`, and `conv_cls.6/.8`).
+
+Skipping im2col avoids materialising the lowered buffer, which is most valuable
+on GPU GEMM backends; on CPU the two paths do similar memory traffic, so the
+default is **off** until the CI quality/perf benchmark confirms the win per
+backend (read once at first use; only the exact value `1` enables it). It does
+not affect the DocTR pipeline.
+
 ### `run(input)` shape
 
 ```ts
