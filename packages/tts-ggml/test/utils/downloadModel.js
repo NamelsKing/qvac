@@ -429,6 +429,11 @@ const SIZE_CHATTERBOX_T3_Q4_0 = { minSize: 100_000_000, maxSize: 500_000_000 }
 const SIZE_CHATTERBOX_S3GEN_F16 = { minSize: 500_000_000, maxSize: 2_000_000_000 }
 const SIZE_SUPERTONIC_Q4_0 = { minSize: 25_000_000, maxSize: 250_000_000 }
 const SIZE_SUPERTONIC2_Q4_0 = { minSize: 25_000_000, maxSize: 250_000_000 }
+// Supertonic 3 (31-language) quant tiers, produced locally by
+// scripts/setup-supertonic3-models.sh (HF convert + requantize): q8_0 ~126 MB,
+// q4_0 ~80 MB, f16 ~191 MB, f32 ~398 MB.  One generous band covers them all so
+// the resolver accepts whichever tier the setup step staged.
+const SIZE_SUPERTONIC3 = { minSize: 25_000_000, maxSize: 500_000_000 }
 
 const CHATTERBOX_GGUFS = [
   {
@@ -795,6 +800,66 @@ async function ensureSupertonicMtlModel (options = {}) {
   return { success: false, path: null, targetDir: requestedDir }
 }
 
+// Supertonic 3 GGUF descriptor for a given quant tier.  The on-disk name
+// encodes the quant so q8_0 / q4_0 can coexist in one models/ dir (unlike v1/v2
+// which keep a single canonical filename and read the quant from metadata).
+function supertonic3Gguf (quant) {
+  return {
+    name: `supertonic3-${quant}.gguf`,
+    ...SIZE_SUPERTONIC3
+    // No registryPath/registrySource yet: v3 GGUFs aren't on S3.  They're
+    // provisioned locally by scripts/setup-supertonic3-models.sh.  Once they
+    // land on the bucket, add registryPath/registrySource here (mirroring
+    // SUPERTONIC_MTL_GGUFS) so the registry-fetch fallback kicks in.
+  }
+}
+
+/**
+ * Ensure a Supertonic 3 GGUF for the requested quant tier is staged in a
+ * directory the native addon can read, and return that path.
+ *
+ * Unlike the v1/v2 helpers this is **check-only** (no registry fetch): the
+ * Supertonic 3 GGUFs are not on S3 yet, so they're produced locally by
+ * `npm run setup-supertonic3-models` (HF convert + requantize).  When the
+ * file is missing the helper returns `{ success: false }` so the caller can
+ * skip the test with a clear "run setup-supertonic3-models" hint.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.targetDir] - dir to look in (default ./models).
+ * @param {string} [options.quant] - quant tier: 'q8_0' | 'q4_0' | 'f16' | 'f32'.
+ * @returns {Promise<{ success: boolean, path: string|null, targetDir: string, quant: string }>}
+ */
+async function ensureSupertonic3Model (options = {}) {
+  const quant = options.quant || 'q8_0'
+  const requestedDir = options.targetDir || path.join(getBaseDir(), 'models')
+  const gguf = supertonic3Gguf(quant)
+  console.log(`Ensuring Supertonic 3 GGUF (${quant}) (requested dir: ${requestedDir})...`)
+
+  const candidateDirs = [requestedDir]
+  if (isMobile && platform === 'android') {
+    for (const d of ANDROID_CANDIDATE_DIRS) {
+      if (!candidateDirs.includes(d)) candidateDirs.push(d)
+    }
+  } else {
+    for (const d of desktopFallbackDirs()) {
+      if (!candidateDirs.includes(d)) candidateDirs.push(d)
+    }
+  }
+
+  for (const dir of candidateDirs) {
+    if (hasAllGgufsIn(dir, [gguf])) {
+      console.log(` ✓ using Supertonic 3 ${quant} GGUF at ${dir}`)
+      return { success: true, path: path.join(dir, gguf.name), targetDir: dir, quant }
+    }
+  }
+
+  console.log(` Supertonic 3 ${quant} GGUF (${gguf.name}) not found locally.  Provision it with:`)
+  console.log('   npm run setup-supertonic3-models')
+  console.log('   (downloads Supertone/supertonic-3 from Hugging Face, converts + requantizes locally)')
+  console.log(` and place under one of: ${candidateDirs.join(', ')}`)
+  return { success: false, path: null, targetDir: requestedDir, quant }
+}
+
 /**
  * Ensure the compiled MeCab/IPAdic dictionary is staged in a directory
  * the native addon can read, and return that directory.  Mirrors the
@@ -852,5 +917,6 @@ module.exports = {
   ensureChatterboxMtlModels,
   ensureSupertonicModel,
   ensureSupertonicMtlModel,
+  ensureSupertonic3Model,
   ensureMecabDict
 }

@@ -23,6 +23,12 @@ const CHATTERBOX_S3GEN_DEFAULT = 'chatterbox-s3gen.gguf'
 const CHATTERBOX_S3GEN_MTL = 'chatterbox-s3gen-mtl.gguf'
 const SUPERTONIC_DEFAULT = 'supertonic.gguf'
 const SUPERTONIC_MTL = 'supertonic2.gguf'
+// Supertonic 3 (31-language).  Same thin engine as v1/v2 — the architecture
+// and quantisation are read from the GGUF metadata by tts-cpp at load time, so
+// the addon only needs to recognise the filename for the modelDir auto-detect
+// path (explicit `files.supertonicModel` paths bypass this and already route
+// to the Supertonic engine).
+const SUPERTONIC_V3 = 'supertonic3.gguf'
 
 function firstNonEmpty (...candidates) {
   for (let i = 0; i < candidates.length; i++) {
@@ -102,8 +108,10 @@ function detectEngineType (engine, normalizedFiles) {
     const mtlT3 = path.join(normalizedFiles.modelDir, CHATTERBOX_T3_MTL)
     const supertonicEn = path.join(normalizedFiles.modelDir, SUPERTONIC_DEFAULT)
     const supertonicMtl = path.join(normalizedFiles.modelDir, SUPERTONIC_MTL)
+    const supertonicV3 = path.join(normalizedFiles.modelDir, SUPERTONIC_V3)
     const hasChatterbox = fileExistsSafe(turboT3) || fileExistsSafe(mtlT3)
-    const hasSupertonic = fileExistsSafe(supertonicEn) || fileExistsSafe(supertonicMtl)
+    const hasSupertonic = fileExistsSafe(supertonicEn) || fileExistsSafe(supertonicMtl) ||
+      fileExistsSafe(supertonicV3)
     if (hasChatterbox) return ENGINE_CHATTERBOX
     if (hasSupertonic) return ENGINE_SUPERTONIC
   }
@@ -120,8 +128,10 @@ function detectEngineType (engine, normalizedFiles) {
 function resolveSupertonicModelDirPath (modelDir) {
   const supertonicEn = path.join(modelDir, SUPERTONIC_DEFAULT)
   const supertonicMtl = path.join(modelDir, SUPERTONIC_MTL)
+  const supertonicV3 = path.join(modelDir, SUPERTONIC_V3)
   if (fileExistsSafe(supertonicEn)) return supertonicEn
   if (fileExistsSafe(supertonicMtl)) return supertonicMtl
+  if (fileExistsSafe(supertonicV3)) return supertonicV3
   return supertonicEn
 }
 

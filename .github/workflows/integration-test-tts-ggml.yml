@@ -191,7 +191,12 @@ jobs:
         with:
           package: tts-ggml
           paths: packages/tts-ggml/models
-          hash-files-glob: packages/tts-ggml/scripts/download-tts-ggml-models.js
+          # Invalidate the cache when either the registry download list OR the
+          # local Supertonic 3 provisioning script changes, so a re-pin of the
+          # v3 source / quant tiers re-stages the GGUFs.
+          hash-files-glob: |
+            packages/tts-ggml/scripts/download-tts-ggml-models.js
+            packages/tts-ggml/scripts/setup-supertonic3-models.sh
           enable-cross-os: 'true'
 
       - name: Download GGUF models from registry
@@ -199,6 +204,20 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}/packages/tts-ggml
         run: npm run download-models:registry
+
+      # Supertonic 3 GGUFs aren't on S3 yet, so provision the quantized (q8_0 /
+      # q4_0) tiers locally: download Supertone/supertonic-3 from Hugging Face,
+      # convert to a reference f32 GGUF, and requantize.  Best-effort
+      # (continue-on-error) — the supertonic3-quant integration test self-skips
+      # when a tier isn't staged, so a provisioning hiccup on a given runner
+      # never hard-fails the suite.  Once the v3 GGUFs land on the QVAC model
+      # registry this step is replaced by the registry download above.
+      - name: Provision Supertonic 3 quantized models (HF convert + requantize)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/packages/tts-ggml
+        run: npm run setup-supertonic3-models
 
       - name: Run integration test
         if: ${{ inputs.run_integration_tests != false }}

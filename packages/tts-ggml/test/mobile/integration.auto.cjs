@@ -10,6 +10,10 @@ async function runAddonTest (options = {}) { // eslint-disable-line no-unused-va
   return runIntegrationModule('../integration/addon.test.js', options)
 }
 
+async function runChatterboxJaMecabTest (options = {}) { // eslint-disable-line no-unused-vars
+  return runIntegrationModule('../integration/chatterbox-ja-mecab.test.js', options)
+}
+
 async function runChatterboxMtlTest (options = {}) { // eslint-disable-line no-unused-vars
   return runIntegrationModule('../integration/chatterbox-mtl.test.js', options)
 }
@@ -30,11 +34,17 @@ async function runSupertonicTest (options = {}) { // eslint-disable-line no-unus
   return runIntegrationModule('../integration/supertonic.test.js', options)
 }
 
+async function runSupertonic3QuantTest (options = {}) { // eslint-disable-line no-unused-vars
+  return runIntegrationModule('../integration/supertonic3-quant.test.js', options)
+}
+
 module.exports = {
   runAddonTest,
+  runChatterboxJaMecabTest,
   runChatterboxMtlTest,
   runGpuSmokeTest,
   runMultipleRunsTest,
   runSupertonicMtlTest,
-  runSupertonicTest
+  runSupertonicTest,
+  runSupertonic3QuantTest
 }
