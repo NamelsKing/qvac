@@ -175,9 +175,15 @@ function ChatCodeBlock({ language, code }: { language?: string; code: string }) 
   }, [code]);
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border bg-fd-muted/40">
+    // `not-prose` opts the whole block out of the `.prose` wrapper's
+    // typography rules (see `MarkdownBody`). Without it, the global
+    // `.prose code` rule in global.css paints the INLINE-code box
+    // (background + border) onto the block's own `<code>`, so the
+    // fenced code reads as inline code nested in a block. Opting out
+    // keeps the mono font on the block itself, undecorated.
+    <div className="not-prose my-2 overflow-hidden rounded-md border bg-fd-muted/40">
       <div className="flex items-center justify-between gap-2 border-b border-fd-border/60 bg-fd-muted/60 px-3 py-1">
-        <span className="font-mono text-[0.7rem] uppercase tracking-wide text-fd-muted-foreground">
+        <span className="font-mono text-[0.7rem] lowercase tracking-wide text-fd-muted-foreground">
           {language ?? 'code'}
         </span>
         <button
