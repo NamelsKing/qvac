@@ -1,13 +1,8 @@
 'use client';
 
-import { Check, Copy, Sparkles, User } from 'lucide-react';
-import {
-  isValidElement,
-  useCallback,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from 'react';
+import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
+import { Sparkles, User } from 'lucide-react';
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -112,7 +107,12 @@ function MarkdownBody({ content }: { content: string }) {
           pre: ({ children }) => {
             // `children` is the `<code>` element react-markdown built
             // for the fence. Pull the language (`language-xxx`) and the
-            // raw text off it, then render a self-contained block.
+            // raw text off it, then hand it to Fumadocs'
+            // `DynamicCodeBlock`, which Shiki-highlights at runtime
+            // (matching the docs' own code blocks) and ships a copy
+            // button. `not-prose` keeps the global `.prose code`
+            // inline-pill styling from leaking onto the highlighted
+            // tokens.
             const codeEl = isValidElement(children)
               ? (children as ReactElement<{
                   className?: string;
@@ -130,7 +130,11 @@ function MarkdownBody({ content }: { content: string }) {
               codeEl.props.className ?? '',
             )?.[1];
             const code = nodeToText(codeEl.props.children).replace(/\n$/, '');
-            return <ChatCodeBlock language={language} code={code} />;
+            return (
+              <div className="not-prose my-2 text-xs">
+                <DynamicCodeBlock lang={language ?? 'text'} code={code} />
+              </div>
+            );
           },
         }}
       >
@@ -154,49 +158,4 @@ function nodeToText(node: ReactNode): string {
     return nodeToText((node.props as { children?: ReactNode }).children);
   }
   return '';
-}
-
-/**
- * A fenced code block in an assistant message. Distinct from inline
- * code: it gets its own card with a language label and a copy button,
- * and a horizontally scrollable body so long lines don't stretch the
- * modal. Renders a native `<pre><code>` so it is NOT re-routed through
- * the `code` component override (which only styles inline code).
- */
-function ChatCodeBlock({ language, code }: { language?: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
-  }, [code]);
-
-  return (
-    <div className="my-2 overflow-hidden rounded-md border bg-fd-muted/40">
-      <div className="flex items-center justify-between gap-2 border-b border-fd-border/60 bg-fd-muted/60 px-3 py-1">
-        <span className="font-mono text-[0.7rem] uppercase tracking-wide text-fd-muted-foreground">
-          {language ?? 'code'}
-        </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label={copied ? 'Copied' : 'Copy code'}
-          title={copied ? 'Copied' : 'Copy code'}
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
-        >
-          {copied ? (
-            <Check className="size-3.5" aria-hidden="true" />
-          ) : (
-            <Copy className="size-3.5" aria-hidden="true" />
-          )}
-        </button>
-      </div>
-      <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
 }

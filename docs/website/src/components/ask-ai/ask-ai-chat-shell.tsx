@@ -238,7 +238,11 @@ export function AskAIChatShell() {
             : cn(
                 'left-1/2 -translate-x-1/2',
                 'bottom-3 sm:bottom-4',
-                'w-[calc(100%-1rem)] sm:w-[min(100%-1.5rem,var(--fd-page-width,900px))]',
+                // Match the docs content body (the `#nd-page` article is
+                // capped at 780px in global.css) so the assistant aligns
+                // with the column readers are looking at. Both the closed
+                // bar and the open modal share this width.
+                'w-[calc(100%-1rem)] sm:w-[min(100%-1.5rem,780px)]',
                 askAI.modalState === 'open'
                   ? // Desktop: bottom-anchored panel capped at 85% of
                     // the DYNAMIC viewport (`dvh`) so mobile browser
