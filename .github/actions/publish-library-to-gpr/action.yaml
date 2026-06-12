@@ -246,8 +246,28 @@ runs:
           echo "🧪 Applying suffix, new name: $PACKAGE_NAME"
         fi
 
+        ORIGINAL_NAME=$(node -p "require('./package.json').name")
         tmpfile=$(mktemp)
         jq --arg new_name "$PACKAGE_NAME" '.name = $new_name' package.json > "$tmpfile" && mv "$tmpfile" package.json
+
+        # cmake-bare derives the prebuild filename from package.json name
+        # (@scope/pkg -> scope__pkg.bare). When we rename @qvac/foo to
+        # @tetherto/foo-mono the on-disk bare modules keep their build-time
+        # names (e.g. qvac__fabric.bare); add symlinks so consumers resolve.
+        old_bare="$(
+          node -e "const n=process.argv[1]; console.log(n.replace(/^@/,'').replace('/','__') + '.bare')" "${ORIGINAL_NAME}"
+        )"
+        new_bare="$(
+          node -e "const n=process.argv[1]; console.log(n.replace(/^@/,'').replace('/','__') + '.bare')" "${PACKAGE_NAME}"
+        )"
+        if [ "${old_bare}" != "${new_bare}" ] && [ -d prebuilds ]; then
+          echo "Linking fabric prebuild aliases: ${old_bare} -> ${new_bare}"
+          shopt -s nullglob
+          for platform_dir in prebuilds/*/; do
+            [ -f "${platform_dir}${old_bare}" ] || continue
+            ln -sf "${old_bare}" "${platform_dir}${new_bare}"
+          done
+        fi
 
         echo "✅ Final publish name: $(node -p "require('./package.json').name")"
         echo "published_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"

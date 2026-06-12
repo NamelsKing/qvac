@@ -139,6 +139,11 @@ jobs:
         run: |
           npm install
 
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - name: Cache C++ test models
         id: model-cache
         if: startsWith(matrix.runner, 'qvac-')

@@ -58,6 +58,16 @@ runs:
           exit 0
         fi
 
+        skip_npm_link="false"
+        if [[ "${fabric_dep}" == npm:* ]]; then
+          if [ "${{ inputs.asan }}" != "true" ] && [ "${{ inputs.build-if-missing }}" != "true" ]; then
+            echo "@qvac/fabric resolves from npm (${fabric_dep}); skipping local link"
+            exit 0
+          fi
+          echo "@qvac/fabric resolves from npm (${fabric_dep}); will build local prebuilds only (no file: link)"
+          skip_npm_link="true"
+        fi
+
         repo_root="${GITHUB_WORKSPACE:-}"
         if [ -z "${repo_root}" ]; then
           repo_root="$(git rev-parse --show-toplevel)"
@@ -120,6 +130,11 @@ runs:
               bare-make install
             )
           fi
+        fi
+
+        if [ "${skip_npm_link}" = "true" ]; then
+          echo "Local fabric prebuilds ready at ${fabric_dir}; GPR install will overlay via normalize-gpr-fabric-prebuilds"
+          exit 0
         fi
 
         echo "Installing @qvac/fabric from local monorepo package at ${fabric_dir}"

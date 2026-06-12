@@ -159,6 +159,11 @@ jobs:
         working-directory: packages/llm-llamacpp
         run: npm install
 
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: packages/llm-llamacpp
+
       - name: Type declaration check
         working-directory: packages/llm-llamacpp
         run: npm run test:dts

@@ -139,6 +139,11 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm install
 
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - name: Generate build system
         id: bare_make_generate
         working-directory: ${{ env.WORKDIR }}

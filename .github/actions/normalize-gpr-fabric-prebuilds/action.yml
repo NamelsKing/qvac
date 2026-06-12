@@ -1,0 +1,69 @@
+name: Normalize GPR fabric prebuilds
+description: >-
+  GPR publishes @qvac/fabric as @tetherto/fabric-mono, so cmake-bare looks for
+  tetherto__fabric-mono.bare while the tarball still ships qvac__fabric.bare.
+  Symlink the published bare module names to the on-disk prebuilds.
+
+inputs:
+  workdir:
+    description: Consumer package directory (e.g. packages/llm-llamacpp)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Symlink GPR fabric bare module names
+      shell: bash
+      working-directory: ${{ inputs.workdir }}
+      run: |
+        set -euo pipefail
+
+        fabric_root="node_modules/@qvac/fabric"
+        if [ ! -f "${fabric_root}/package.json" ]; then
+          echo "No @qvac/fabric install at ${fabric_root}; skipping"
+          exit 0
+        fi
+
+        pkg_name="$(
+          node -e 'console.log(require("./node_modules/@qvac/fabric/package.json").name)'
+        )"
+        expected_bare="$(
+          node -e "const n=process.argv[1]; console.log(n.replace(/^@/,'').replace('/','__') + '.bare')" "${pkg_name}"
+        )"
+
+        if [ "${expected_bare}" = "qvac__fabric.bare" ]; then
+          echo "Fabric package name is ${pkg_name}; prebuild names already match"
+          exit 0
+        fi
+
+        repo_root="${GITHUB_WORKSPACE:-}"
+        if [ -z "${repo_root}" ]; then
+          repo_root="$(git rev-parse --show-toplevel)"
+        fi
+        local_fabric_prebuilds="${repo_root}/packages/fabric/prebuilds"
+        if [ -d "${local_fabric_prebuilds}" ]; then
+          echo "Overlaying monorepo fabric prebuilds from ${local_fabric_prebuilds}"
+          for platform_dir in "${local_fabric_prebuilds}"/*/; do
+            [ -d "${platform_dir}" ] || continue
+            platform="$(basename "${platform_dir}")"
+            dest="${fabric_root}/prebuilds/${platform}"
+            mkdir -p "${dest}"
+            cp -a "${platform_dir}." "${dest}/"
+          done
+        fi
+
+        echo "Normalizing fabric prebuilds for ${pkg_name} (expected ${expected_bare})"
+
+        shopt -s nullglob
+        for platform_dir in "${fabric_root}"/prebuilds/*/; do
+          [ -d "${platform_dir}" ] || continue
+          for src in "${platform_dir}"qvac__fabric.bare "${platform_dir}"qvac__fabric@*.bare; do
+            [ -f "${src}" ] || continue
+            base="$(basename "${src}")"
+            dest="${platform_dir}${expected_bare}"
+            if [ ! -e "${dest}" ]; then
+              ln -sf "${base}" "${dest}"
+              echo "  ${dest} -> ${base}"
+            fi
+          done
+        done

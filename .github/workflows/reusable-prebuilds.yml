@@ -273,6 +273,11 @@ jobs:
         shell: bash
         run: npm install
 
+      - name: Normalize GPR fabric prebuild names
+        uses: ./.github/actions/normalize-gpr-fabric-prebuilds
+        with:
+          workdir: ${{ env.WORKDIR }}
+
       - if: ${{ inputs.setup-rust-toolchain }}
         name: Setup Rust toolchain
         uses: tetherto/qvac/.github/actions/setup-rust-prebuild@1225268a5953ea733a30dad7d3d9581073fb03da
