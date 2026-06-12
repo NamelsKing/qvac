@@ -1,0 +1,37 @@
+name: Configure scoped npmrc
+description: >-
+  Write a package-local .npmrc that resolves @qvac/* from npmjs.org and
+  @tetherto/* from GitHub Packages (GPR).
+
+inputs:
+  workdir:
+    description: Directory to write .npmrc into
+    required: false
+    default: "."
+  gpr-token:
+    description: Auth token for GitHub Packages (@tetherto/*)
+    required: true
+  npm-token:
+    description: Optional auth token for registry.npmjs.org (@qvac/*)
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Configure .npmrc
+      shell: bash
+      working-directory: ${{ inputs.workdir }}
+      env:
+        GPR_TOKEN: ${{ inputs.gpr-token }}
+        NPM_TOKEN: ${{ inputs.npm-token }}
+      run: |
+        set -euo pipefail
+
+        : > .npmrc
+        echo "registry=https://registry.npmjs.org/" >> .npmrc
+        echo "@qvac:registry=https://registry.npmjs.org/" >> .npmrc
+        if [ -n "${NPM_TOKEN}" ]; then
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
+        fi
+        echo "@tetherto:registry=https://npm.pkg.github.com/" >> .npmrc
+        echo "//npm.pkg.github.com/:_authToken=${GPR_TOKEN}" >> .npmrc

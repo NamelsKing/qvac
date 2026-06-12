@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   test-cpp:
@@ -114,6 +115,13 @@ jobs:
 
       - name: Install bare tooling
         run: npm install -g --force bare bare-make
+
+      - name: Configure scoped npmrc for GitHub Packages
+        uses: ./.github/actions/configure-scoped-npmrc
+        with:
+          workdir: ${{ env.WORKDIR }}
+          gpr-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
 
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric

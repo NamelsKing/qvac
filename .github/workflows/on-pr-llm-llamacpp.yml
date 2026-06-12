@@ -143,6 +143,13 @@ jobs:
         with:
           node-version: 20
 
+      - name: Configure scoped npmrc for GitHub Packages
+        uses: ./.github/actions/configure-scoped-npmrc
+        with:
+          workdir: packages/llm-llamacpp
+          gpr-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric
         with:

@@ -102,6 +102,7 @@ jobs:
   prebuild:
     permissions:
       contents: write
+      packages: read
       pull-requests: write
       id-token: write
     strategy:
@@ -249,6 +250,13 @@ jobs:
           BREW_PACKAGES: ${{ inputs.mac-brew-packages }}
         run: |
           brew install --quiet $BREW_PACKAGES
+
+      - name: Configure scoped npmrc for GitHub Packages
+        uses: ./.github/actions/configure-scoped-npmrc
+        with:
+          workdir: ${{ env.WORKDIR }}
+          gpr-token: ${{ secrets.GITHUB_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
 
       - name: Link local @qvac/fabric
         uses: ./.github/actions/link-local-qvac-fabric
