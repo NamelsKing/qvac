@@ -112,6 +112,12 @@ jobs:
       qvac_perf_runs: ${{ inputs.qvac_perf_runs }}
       qvac_perf_warmup_runs: ${{ inputs.qvac_perf_warmup_runs }}
 
+  # Mobile runs a single iteration regardless of QVAC_PERF_RUNS because the
+  # slowest Device Farm device (Pixel 9 Pro, Vulkan) takes ~273s per SD2.1
+  # generation at 256x256 — multiple iterations would exceed the 20-minute
+  # per-test timeout. Single-shot is still useful for trend tracking; the
+  # cold-start / warm-up concern is accepted for now until Device Farm
+  # timeout can be extended or a faster test-only model is available.
   mobile-benchmarks:
     needs:
       - context
