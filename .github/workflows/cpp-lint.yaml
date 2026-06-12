@@ -143,6 +143,8 @@ jobs:
         uses: ./.github/actions/normalize-gpr-fabric-prebuilds
         with:
           workdir: ${{ env.WORKDIR }}
+          platform: linux
+          arch: x64
 
       - name: Generate build system
         id: bare_make_generate

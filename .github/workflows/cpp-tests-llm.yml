@@ -143,6 +143,8 @@ jobs:
         uses: ./.github/actions/normalize-gpr-fabric-prebuilds
         with:
           workdir: ${{ env.WORKDIR }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
 
       - name: Cache C++ test models
         id: model-cache

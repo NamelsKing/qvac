@@ -277,6 +277,9 @@ jobs:
         uses: ./.github/actions/normalize-gpr-fabric-prebuilds
         with:
           workdir: ${{ env.WORKDIR }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          tags: ${{ matrix.tags || '' }}
 
       - if: ${{ inputs.setup-rust-toolchain }}
         name: Setup Rust toolchain

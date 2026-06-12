@@ -2,12 +2,29 @@ name: Normalize GPR fabric prebuilds
 description: >-
   GPR publishes @qvac/fabric as @tetherto/fabric-mono, so cmake-bare looks for
   tetherto__fabric-mono.bare while the tarball still ships qvac__fabric.bare.
-  Symlink the published bare module names to the on-disk prebuilds.
+  Symlink the published bare module names to the on-disk prebuilds. Optionally
+  overlay a single locally-built platform prebuild without touching share/ or
+  include/ from GPR.
 
 inputs:
   workdir:
     description: Consumer package directory (e.g. packages/llm-llamacpp)
     required: true
+  platform:
+    description: >-
+      Optional bare-make platform for overlaying a locally-built fabric runtime
+      (e.g. linux, ios). When set with arch, only that prebuilds/<platform>-<arch>
+      directory is copied from packages/fabric.
+    required: false
+    default: ""
+  arch:
+    description: Optional bare-make arch paired with platform
+    required: false
+    default: ""
+  tags:
+    description: Optional prebuild directory suffix (e.g. -simulator)
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -30,40 +47,57 @@ runs:
         expected_bare="$(
           node -e "const n=process.argv[1]; console.log(n.replace(/^@/,'').replace('/','__') + '.bare')" "${pkg_name}"
         )"
+        expected_exports="${expected_bare%.bare}.bare.exports"
+
+        target_platform="${{ inputs.platform }}"
+        target_arch="${{ inputs.arch }}"
+        target_tags="${{ inputs.tags }}"
+
+        repo_root="${GITHUB_WORKSPACE:-}"
+        if [ -z "${repo_root}" ]; then
+          repo_root="$(git rev-parse --show-toplevel)"
+        fi
+
+        if [ -n "${target_platform}" ] && [ -n "${target_arch}" ]; then
+          platform_key="${target_platform}-${target_arch}${target_tags}"
+          local_platform_dir="${repo_root}/packages/fabric/prebuilds/${platform_key}"
+          dest_platform_dir="${fabric_root}/prebuilds/${platform_key}"
+          if [ -d "${local_platform_dir}" ]; then
+            echo "Overlaying local fabric runtime for ${platform_key}"
+            mkdir -p "${dest_platform_dir}"
+            cp -a "${local_platform_dir}/." "${dest_platform_dir}/"
+          fi
+        fi
 
         if [ "${expected_bare}" = "qvac__fabric.bare" ]; then
           echo "Fabric package name is ${pkg_name}; prebuild names already match"
           exit 0
         fi
 
-        repo_root="${GITHUB_WORKSPACE:-}"
-        if [ -z "${repo_root}" ]; then
-          repo_root="$(git rev-parse --show-toplevel)"
-        fi
-        local_fabric_prebuilds="${repo_root}/packages/fabric/prebuilds"
-        if [ -d "${local_fabric_prebuilds}" ]; then
-          echo "Overlaying monorepo fabric prebuilds from ${local_fabric_prebuilds}"
-          for platform_dir in "${local_fabric_prebuilds}"/*/; do
-            [ -d "${platform_dir}" ] || continue
-            platform="$(basename "${platform_dir}")"
-            dest="${fabric_root}/prebuilds/${platform}"
-            mkdir -p "${dest}"
-            cp -a "${platform_dir}." "${dest}/"
-          done
-        fi
-
         echo "Normalizing fabric prebuilds for ${pkg_name} (expected ${expected_bare})"
+
+        link_alias() {
+          local platform_dir="$1"
+          local src="$2"
+          local dest_name="$3"
+          local base dest
+          base="$(basename "${src}")"
+          dest="${platform_dir}${dest_name}"
+          if [ ! -e "${dest}" ]; then
+            ln -sf "${base}" "${dest}"
+            echo "  ${dest} -> ${base}"
+          fi
+        }
 
         shopt -s nullglob
         for platform_dir in "${fabric_root}"/prebuilds/*/; do
           [ -d "${platform_dir}" ] || continue
           for src in "${platform_dir}"qvac__fabric.bare "${platform_dir}"qvac__fabric@*.bare; do
             [ -f "${src}" ] || continue
-            base="$(basename "${src}")"
-            dest="${platform_dir}${expected_bare}"
-            if [ ! -e "${dest}" ]; then
-              ln -sf "${base}" "${dest}"
-              echo "  ${dest} -> ${base}"
-            fi
+            link_alias "${platform_dir}" "${src}" "${expected_bare}"
+          done
+          for src in "${platform_dir}"qvac__fabric.bare.exports "${platform_dir}"qvac__fabric@*.bare.exports; do
+            [ -f "${src}" ] || continue
+            link_alias "${platform_dir}" "${src}" "${expected_exports}"
           done
         done

@@ -179,6 +179,8 @@ jobs:
         uses: ./.github/actions/normalize-gpr-fabric-prebuilds
         with:
           workdir: ${{ env.WORKDIR }}
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
 
       - name: Install bare tooling
         run: npm install -g --force bare bare-make bare-runtime bare-https brittle
