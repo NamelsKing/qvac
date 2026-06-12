@@ -227,6 +227,12 @@ runs:
             name = re.sub(r'\(\d+\)', '(N)', name)
             # Replace standalone large numbers that look like token counts: 538 -> N
             name = re.sub(r'\b\d{2,}\b', 'N', name)
+            # Truncate at assertion detail (variable model output in the name)
+            for marker in ['. Found ', '. Full output', ': "', ", got "]:
+                idx = name.find(marker)
+                if idx > 0:
+                    name = name[:idx]
+                    break
             return name.strip()
 
         def escape_md(text):
@@ -264,11 +270,6 @@ runs:
                         passed = m.group(1) == 'ok'
                         num = int(m.group(2))
                         rest = m.group(3).strip()
-                        # Deduplicate (logcat has bare + ReactNativeJS echo)
-                        key = (num, rest.split('#')[0].strip())
-                        if key in seen:
-                            continue
-                        seen.add(key)
                         # Parse name, timing, skip
                         name = rest.rstrip("'\"")  # strip ReactNativeJS quote wrapper
                         time_ms = None
@@ -285,6 +286,12 @@ runs:
                             # "not ok N - name: error message"
                             parts = name.split(':', 1)
                             name = parts[0].strip()
+                        name = normalize_test_name(name)
+                        # Deduplicate on normalized name (not num+name) so perf
+                        # iterations and ReactNativeJS echoes don't inflate counts.
+                        if name in seen:
+                            continue
+                        seen.add(name)
                         tests.append({
                             'num': num, 'name': name,
                             'status': status, 'timeMs': time_ms
@@ -327,11 +334,9 @@ runs:
             devices.add(dev)
             tests = parse_tap_from_file(f)
             for t in tests:
-                normalized = normalize_test_name(t['name'])
-                existing = tap_rows.get(normalized, {}).get(dev)
-                # Keep the first result per device (skip duplicates from normalization)
+                existing = tap_rows.get(t['name'], {}).get(dev)
                 if existing is None:
-                    tap_rows.setdefault(normalized, {})[dev] = {
+                    tap_rows.setdefault(t['name'], {})[dev] = {
                         'status': t['status'],
                         'timeMs': t['timeMs']
                     }
