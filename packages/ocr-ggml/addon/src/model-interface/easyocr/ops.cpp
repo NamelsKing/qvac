@@ -1,5 +1,8 @@
 #include "ops.hpp"
 
+#include <cstdlib>
+#include <cstring>
+
 #include "ggml.h"
 
 // NOLINTBEGIN(readability-identifier-naming,readability-identifier-length)
@@ -10,14 +13,29 @@ namespace easyocr::ggml::ops {
 
 namespace {
 
-// Add a [OC] bias to a [W, H, OC, N] activation map. We explicitly broadcast
-// via ggml_repeat (matching the pattern used in ggml's own yolo example) to
-// avoid relying on implicit broadcast semantics in ggml_add.
+// Opt-in (OCR_GGML_CRAFT_BIAS_BROADCAST=1): add the channel bias via ggml_add's
+// implicit broadcast instead of materialising a full [W,H,OC,N] copy with
+// ggml_repeat. ggml_add officially broadcasts its second operand
+// (ggml_can_repeat) and the CPU/Vulkan/Metal kernels all implement it, so the
+// result is numerically identical while saving a buffer + an op per conv.
+// Default off until CI confirms it across backends. Read via getenv at
+// graph-build time (not a hot path) so a single-process test can toggle it.
+bool bias_broadcast_enabled() {
+  const char* v = std::getenv("OCR_GGML_CRAFT_BIAS_BROADCAST");
+  return v != nullptr && std::strcmp(v, "1") == 0;
+}
+
+// Add a [OC] bias to a [W, H, OC, N] activation map. By default we broadcast
+// via ggml_repeat (the historical, always-supported path); the env flag opts
+// into ggml_add's implicit broadcast, dropping the ggml_repeat.
 ::ggml_tensor* add_channel_bias(
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     ::ggml_context* ctx, ::ggml_tensor* x, ::ggml_tensor* bias) {
   const int64_t oc = bias->ne[0];
   auto* b4 = ggml_reshape_4d(ctx, bias, 1, 1, oc, 1);
+  if (bias_broadcast_enabled()) {
+    return ggml_add(ctx, x, b4);
+  }
   return ggml_add(ctx, x, ggml_repeat(ctx, b4, x));
 }
 
