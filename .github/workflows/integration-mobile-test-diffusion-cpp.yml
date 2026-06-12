@@ -174,7 +174,6 @@ jobs:
         uses: ./.github/actions/run-mobile-integration-tests/extract-addon-perf
         with:
           platform: ${{ matrix.platform }}
-          addon-npm-name: '@qvac/diffusion-cpp'
           artifact-name: perf-report-diffusion-cpp-${{ matrix.platform }}-${{ github.run_number }}
 
       - name: Comment results on PR
