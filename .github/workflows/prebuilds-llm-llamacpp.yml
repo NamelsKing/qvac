@@ -41,6 +41,7 @@ jobs:
   prebuild:
     permissions:
       contents: write
+      packages: read
       pull-requests: write
       id-token: write
     uses: ./.github/workflows/reusable-prebuilds.yml
