@@ -91,11 +91,14 @@ function saveGeneratedImages (modelDir, filenameSuffix, images) {
 
 safeTest('idle | run: allowed, returns QvacResponse', { timeout: testTimeout }, async t => {
   const { model, modelDir } = await setupModel(t)
+  const isMobileDevice = os.platform() === 'ios' || os.platform() === 'android'
 
-  const totalIterations = WARMUP_RUNS + PERF_RUNS
+  // Mobile: single run (Pixel 9 Pro takes ~273s per generation — 3x would blow
+  // the 20-minute Device Farm timeout). Desktop: PERF_RUNS iterations.
+  const totalIterations = isMobileDevice ? 1 : (WARMUP_RUNS + PERF_RUNS)
   let images = []
   for (let iteration = 0; iteration < totalIterations; iteration++) {
-    const isWarmup = iteration < WARMUP_RUNS
+    const isWarmup = !isMobileDevice && iteration < WARMUP_RUNS
     const tGen = Date.now()
     let ttfbMs = null
     const response = await model.run({ ...SHORT_PARAMS, seed: SHORT_PARAMS.seed + iteration })
