@@ -455,7 +455,12 @@ function generateMarkdownReport (aggregated, opts) {
     { key: 'decode_time_ms', unit: 'ms', round: true, label: 'Mean Decode (ms)' },
     { key: 'vision_encode_time_ms', unit: 'ms', round: true, label: 'Mean Vision Encode (ms)' },
     { key: 'ttft_ms', unit: 'ms', round: true, label: 'Mean TTFT (ms)' },
-    { key: 'tps', unit: '', round: false, label: 'Mean TPS' }
+    { key: 'tps', unit: '', round: false, label: 'Mean TPS' },
+    { key: 'model_load_ms', unit: 'ms', round: true, label: 'Mean Load (ms)' },
+    { key: 'generation_ms', unit: 'ms', round: true, label: 'Mean Gen (ms)' },
+    { key: 'total_steps', unit: '', round: true, label: 'Steps' },
+    { key: 'steps_per_second', unit: '', round: false, label: 'Mean Steps/sec' },
+    { key: 'megapixels_per_second', unit: '', round: false, label: 'Mean MP/sec' }
   ]
 
   const scenarioMap = aggregated.scenarios || {}
