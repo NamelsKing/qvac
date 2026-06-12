@@ -4,16 +4,18 @@ import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import { Sparkles, User } from 'lucide-react';
 import {
   isValidElement,
+  memo,
   useEffect,
   useState,
   type ReactElement,
   type ReactNode,
 } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { cn } from '@/lib/cn';
 import { AskAIReferences } from './ask-ai-references';
+import { formatCode } from './format-code';
 import type { ChatMessage } from './use-ask-ai-chat';
 
 /**
@@ -28,7 +30,7 @@ import type { ChatMessage } from './use-ask-ai-chat';
  * own max-width so long messages wrap without horizontally
  * stretching the modal.
  */
-export function AskAIChatMessage({
+export const AskAIChatMessage = memo(function AskAIChatMessage({
   message,
   isWaiting = false,
 }: {
@@ -78,7 +80,7 @@ export function AskAIChatMessage({
       </div>
     </div>
   );
-}
+});
 
 /**
  * Per-dot animation start offset (ms) for the bouncing typing
@@ -143,6 +145,70 @@ function AssistantTypingDots() {
   );
 }
 
+// Hoisted to module scope so their identities are STABLE across every
+// render. Passing fresh `components` / `remarkPlugins` on each render
+// makes react-markdown treat `<pre>` (etc.) as a brand-new component
+// type every keystroke, which unmounts + remounts the `DynamicCodeBlock`
+// subtree — re-running Shiki and flashing its placeholder, so the code
+// visibly "jumps" while the user types in the composer. Stable
+// references let React reconcile the same instances in place.
+const REMARK_PLUGINS = [remarkGfm];
+
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children, ...rest }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="text-fd-primary underline underline-offset-2 hover:text-fd-primary/80"
+      {...rest}
+    >
+      {children}
+    </a>
+  ),
+  // The `code` override is now ONLY ever reached for inline code. Block
+  // code is intercepted by the `pre` override below, which reads the
+  // fenced `<code>` element's props directly and renders its own markup
+  // - so react-markdown never routes the block's inner `<code>` through
+  // here. That makes the inline-vs-block split deterministic (remark
+  // always wraps block code in `<pre>`; inline code never is) and fixes
+  // fences that omit a language.
+  code: ({ node: _node, className: _className, children, ...rest }) => (
+    <code
+      className="rounded bg-fd-muted px-1 py-0.5 font-mono text-[0.85em] text-fd-primary"
+      {...rest}
+    >
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => {
+    // `children` is the `<code>` element react-markdown built for the
+    // fence. Pull the language (`language-xxx`) and the raw text off it,
+    // then hand it to Fumadocs' `DynamicCodeBlock`, which Shiki-
+    // highlights at runtime — the SAME renderer the docs pages use, so
+    // the tokens get real syntax colors and the indentation is preserved
+    // exactly like the rest of the site — and ships a copy button.
+    // `not-prose` keeps the global `.prose code` inline-pill styling off
+    // the highlighted tokens.
+    const codeEl = isValidElement(children)
+      ? (children as ReactElement<{
+          className?: string;
+          children?: ReactNode;
+        }>)
+      : null;
+    if (!codeEl) {
+      return (
+        <pre className="my-2 overflow-x-auto rounded-md border bg-fd-muted/40 p-3 font-mono text-xs">
+          {children}
+        </pre>
+      );
+    }
+    const language = /language-(\w+)/.exec(codeEl.props.className ?? '')?.[1];
+    const code = nodeToText(codeEl.props.children).replace(/\n$/, '');
+    return <ChatCodeBlock language={language} code={code} />;
+  },
+};
+
 /**
  * Assistant-message markdown renderer. We keep the rule list small
  * and apply targeted Tailwind classes so the output picks up the
@@ -156,71 +222,7 @@ function AssistantTypingDots() {
 function MarkdownBody({ content }: { content: string }) {
   return (
     <div className="prose prose-sm max-w-none break-words text-fd-popover-foreground prose-headings:text-fd-popover-foreground prose-strong:text-fd-popover-foreground prose-code:text-fd-primary">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children, ...rest }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-fd-primary underline underline-offset-2 hover:text-fd-primary/80"
-              {...rest}
-            >
-              {children}
-            </a>
-          ),
-          // The `code` override is now ONLY ever reached for inline
-          // code. Block code is intercepted by the `pre` override
-          // below, which reads the fenced `<code>` element's props
-          // directly and renders its own markup - so react-markdown
-          // never routes the block's inner `<code>` through here.
-          // That makes the inline-vs-block split deterministic
-          // (remark always wraps block code in `<pre>`; inline code
-          // never is) and fixes fences that omit a language.
-          code: ({ node: _node, className: _className, children, ...rest }) => (
-            <code
-              className="rounded bg-fd-muted px-1 py-0.5 font-mono text-[0.85em] text-fd-primary"
-              {...rest}
-            >
-              {children}
-            </code>
-          ),
-          pre: ({ children }) => {
-            // `children` is the `<code>` element react-markdown built
-            // for the fence. Pull the language (`language-xxx`) and the
-            // raw text off it, then hand it to Fumadocs'
-            // `DynamicCodeBlock`, which Shiki-highlights at runtime —
-            // the SAME renderer the docs pages use, so the tokens get
-            // real syntax colors and the indentation is preserved
-            // exactly like the rest of the site — and ships a copy
-            // button. `not-prose` keeps the global `.prose code`
-            // inline-pill styling off the highlighted tokens.
-            const codeEl = isValidElement(children)
-              ? (children as ReactElement<{
-                  className?: string;
-                  children?: ReactNode;
-                }>)
-              : null;
-            if (!codeEl) {
-              return (
-                <pre className="my-2 overflow-x-auto rounded-md border bg-fd-muted/40 p-3 font-mono text-xs">
-                  {children}
-                </pre>
-              );
-            }
-            const language = /language-(\w+)/.exec(
-              codeEl.props.className ?? '',
-            )?.[1];
-            const code = nodeToText(codeEl.props.children).replace(/\n$/, '');
-            return (
-              <div className="not-prose my-2 text-xs">
-                <DynamicCodeBlock lang={language ?? 'text'} code={code} />
-              </div>
-            );
-          },
-        }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {content}
       </ReactMarkdown>
     </div>
@@ -241,4 +243,40 @@ function nodeToText(node: ReactNode): string {
     return nodeToText((node.props as { children?: ReactNode }).children);
   }
   return '';
+}
+
+/**
+ * A fenced code block in an assistant message. Shiki-highlighted via
+ * Fumadocs' `DynamicCodeBlock` (matching the docs pages), and
+ * best-effort re-indented with Prettier first — Inkeep's API collapses
+ * code indentation to a single space, so we reconstruct it from the
+ * snippet's own syntax. Formatting is async + debounced: the raw text
+ * shows immediately (and keeps up while streaming), then snaps to the
+ * formatted version once the snippet parses. `not-prose` keeps the
+ * global `.prose code` inline-pill styling off the highlighted tokens.
+ */
+function ChatCodeBlock({ language, code }: { language?: string; code: string }) {
+  const [display, setDisplay] = useState(code);
+
+  useEffect(() => {
+    // Show the raw (streaming) text right away, then re-indent once the
+    // stream settles so Prettier isn't re-run on every streamed token.
+    setDisplay(code);
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      void formatCode(code, language).then((formatted) => {
+        if (!cancelled) setDisplay(formatted);
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, [code, language]);
+
+  return (
+    <div className="not-prose my-2">
+      <DynamicCodeBlock lang={language ?? 'text'} code={display} />
+    </div>
+  );
 }
