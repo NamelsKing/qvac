@@ -196,7 +196,7 @@ jobs:
   combine-perf-reports:
     name: Combined Performance Report
     needs: [authorize, run-integration-tests, run-mobile-integration-tests]
-    if: always() && needs.authorize.outputs.allowed == 'true'
+    if: always() && !cancelled() && needs.authorize.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
